@@ -388,7 +388,7 @@ function TabEdit({ item, categories, subcategoriesMap, hashtags: hashtagDict, sh
       }
       if (isNew) {
         if (!form.name?.trim()) { alert('Введіть назву товару'); return }
-        if (!form.code?.trim()) { alert('Введіть SKU'); return }
+        // SKU is optional — backend auto-generates RH-{id} if empty
         const res = await fetch(`${BACKEND_URL}/api/audit/items`, {
           method: 'POST', headers, body: JSON.stringify(payload)
         })
@@ -414,8 +414,8 @@ function TabEdit({ item, categories, subcategoriesMap, hashtags: hashtagDict, sh
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><label className="block text-corp-text-muted mb-1">Назва</label>
           <input value={form.name} onChange={e => f('name', e.target.value)} className="w-full rounded-lg border border-corp-border px-3 py-2 text-sm" data-testid="edit-name" /></div>
-        <div><label className="block text-corp-text-muted mb-1">SKU</label>
-          <input value={form.code} onChange={e => f('code', e.target.value)} className="w-full rounded-lg border border-corp-border px-3 py-2 text-sm" /></div>
+        <div><label className="block text-corp-text-muted mb-1">SKU{!item.id && <span className="text-corp-text-muted/70 ml-1">(авто, якщо порожньо)</span>}</label>
+          <input value={form.code} onChange={e => f('code', e.target.value)} className="w-full rounded-lg border border-corp-border px-3 py-2 text-sm" placeholder={!item.id ? `RH-${'{auto}'}` : ''} /></div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div><label className="block text-corp-text-muted mb-1">Ціна купівлі</label>

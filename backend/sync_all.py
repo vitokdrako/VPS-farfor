@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-Master sync script - syncs all data from OpenCart to RentalHub DB
-PRODUCTION VERSION з автоматичним скачуванням фотографій
-Run this via cron every 30 minutes
+Master sync script — RentalHub ↔ OpenCart
+PRODUCTION VERSION
+
+NEW DIRECTION (Feb 2026):
+- FROM OpenCart we ONLY pull new orders (status_id=2) → RentalHub
+- TO OpenCart we push everything else: product changes, quantities, photo, name, sizes, color, category/subcategory
+- RentalHub is the source of truth for the product catalog
+
+Run via cron every 30 minutes.
 """
 import mysql.connector
 from datetime import datetime
 import time
 import os
-import requests
-from PIL import Image
-from io import BytesIO
 
 # Database configurations
 OC = {
@@ -29,27 +32,17 @@ RH = {
     'charset': 'utf8mb4'
 }
 
-# OpenCart image base URL
-OPENCART_IMAGE_BASE = "https://www.farforrent.com.ua/image/"
-
-# Image paths - Production or Local
+# Image paths — Production or Local
 PRODUCTION_DIR = "/home/farforre/farforrent.com.ua/rentalhub/backend/uploads/products"
 LOCAL_DIR = "/app/backend/uploads/products"
+PRODUCTS_DIR = PRODUCTION_DIR if os.path.exists(os.path.dirname(PRODUCTION_DIR)) else LOCAL_DIR
 
-# Визначити який шлях використовувати
-if os.path.exists(os.path.dirname(PRODUCTION_DIR)):
-    PRODUCTS_DIR = PRODUCTION_DIR
-else:
-    PRODUCTS_DIR = LOCAL_DIR
-
-# Створити директорії
-os.makedirs(PRODUCTS_DIR, exist_ok=True)
-os.makedirs(os.path.join(PRODUCTS_DIR, "thumbnails"), exist_ok=True)
-os.makedirs(os.path.join(PRODUCTS_DIR, "medium"), exist_ok=True)
-
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
-IMAGE_TIMEOUT = 30
-MAX_RETRIES = 2
+# OC image catalog (used when reverse-pushing photos)
+OC_IMAGE_BASE_DIR_CANDIDATES = [
+    "/home/farforre/farforrent.com.ua/image/catalog/rentalhub",
+    "/var/www/farforrent.com.ua/image/catalog/rentalhub",
+]
+OC_IMAGE_TARGET_DIR = next((p for p in OC_IMAGE_BASE_DIR_CANDIDATES if os.path.exists(os.path.dirname(p))), None)
 
 
 def log(msg):
@@ -57,23 +50,18 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+# ============================================================
+# CLIENT AUTO-CREATE FROM ORDER
+# ============================================================
 def ensure_client_from_order(cursor, customer_name, phone, email):
-    """
-    Знайти або створити клієнта в client_users на основі даних ордеру.
-    Повертає client_user_id або None.
-    Унікальний ідентифікатор — email. Без email клієнт не створюється.
-    """
+    """Find or create client_users entry. Unique by email."""
     if not customer_name:
         return None
-    
     email = (email or '').strip()
     email_normalized = email.lower().strip() if email else ''
-    
-    # Без email — не створюємо і не шукаємо
     if not email_normalized or '@' not in email_normalized:
         return None
-    
-    # Пошук по email
+
     cursor.execute(
         "SELECT id FROM client_users WHERE email_normalized = %s LIMIT 1",
         (email_normalized,)
@@ -84,9 +72,9 @@ def ensure_client_from_order(cursor, customer_name, phone, email):
         phone = (phone or '').strip()
         if phone:
             cursor.execute(
-                """UPDATE client_users 
+                """UPDATE client_users
                    SET phone = COALESCE(NULLIF(phone, ''), %s),
-                       last_order_date = CURDATE(), updated_at = NOW() 
+                       last_order_date = CURDATE(), updated_at = NOW()
                    WHERE id = %s""",
                 (phone, client_id)
             )
@@ -96,553 +84,289 @@ def ensure_client_from_order(cursor, customer_name, phone, email):
                 (client_id,)
             )
         return client_id
-    
-    # Не знайдено — створити нового клієнта
+
     phone = (phone or '').strip()
     cursor.execute("""
-        INSERT INTO client_users 
-            (email, email_normalized, full_name, phone, source, is_active, created_at, updated_at, last_order_date)
+        INSERT INTO client_users
+        (email, email_normalized, full_name, phone, source, is_active, created_at, updated_at, last_order_date)
         VALUES (%s, %s, %s, %s, 'opencart', 1, NOW(), NOW(), CURDATE())
     """, (email, email_normalized, customer_name, phone or None))
-    
+
     cursor.execute("SELECT LAST_INSERT_ID()")
     new_id = cursor.fetchone()
     return new_id[0] if new_id else None
 
 
-
 # ============================================================
-# IMAGE FUNCTIONS
+# RH → OC: PUSH QUANTITIES
 # ============================================================
-
-def create_thumbnail(image_path: str, size: tuple, output_subdir: str) -> str:
-    """
-    Створити thumbnail зображення
-    
-    Args:
-        image_path: Шлях до оригінального зображення
-        size: Розмір (width, height)
-        output_subdir: Піддиректорія ('thumbnails' або 'medium')
-    """
-    try:
-        img = Image.open(image_path)
-        
-        # Convert RGBA to RGB if needed
-        if img.mode in ('RGBA', 'LA', 'P'):
-            background = Image.new('RGB', img.size, (255, 255, 255))
-            if img.mode == 'P':
-                img = img.convert('RGBA')
-            background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
-            img = background
-        
-        # Resize keeping aspect ratio
-        img.thumbnail(size, Image.Resampling.LANCZOS)
-        
-        # Save thumbnail
-        filename = os.path.basename(image_path)
-        name, ext = os.path.splitext(filename)
-        
-        suffix = "_thumb" if output_subdir == "thumbnails" else "_medium"
-        thumb_path = os.path.join(PRODUCTS_DIR, output_subdir, f"{name}{suffix}{ext}")
-        
-        img.save(thumb_path, quality=85, optimize=True)
-        return thumb_path
-        
-    except Exception as e:
-        return None
-
-
-def download_image(url: str) -> bytes:
-    """Скачати зображення з URL"""
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
-    for attempt in range(MAX_RETRIES):
-        try:
-            response = requests.get(url, timeout=IMAGE_TIMEOUT, headers=headers, stream=True)
-            response.raise_for_status()
-            return response.content
-        except requests.exceptions.RequestException as e:
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(1)
-            else:
-                return None
-    return None
-
-
-def download_product_image(product_id: int, sku: str, oc_image_path: str, rh_cur, rh_conn) -> bool:
-    """
-    Скачати та обробити зображення одного товару
-    
-    Returns:
-        bool: True якщо успішно
-    """
-    try:
-        if not oc_image_path:
-            return False
-        
-        # Побудувати URL зображення в OpenCart
-        # НЕ видаляємо catalog/ - URL має бути повним
-        image_url = f"{OPENCART_IMAGE_BASE}{oc_image_path}"
-        
-        # Скачати зображення
-        image_content = download_image(image_url)
-        if not image_content:
-            return False
-        
-        # Визначити розширення файлу
-        file_ext = os.path.splitext(oc_image_path)[1].lower()
-        if not file_ext or file_ext not in ALLOWED_EXTENSIONS:
-            file_ext = ".jpg"
-        
-        # Згенерувати безпечне ім'я файлу
-        safe_sku = sku.replace("/", "_").replace("\\", "_").replace(" ", "_")
-        timestamp = int(time.time())
-        filename = f"{safe_sku}_{timestamp}{file_ext}"
-        file_path = os.path.join(PRODUCTS_DIR, filename)
-        
-        # Зберегти оригінал
-        with open(file_path, "wb") as f:
-            f.write(image_content)
-        
-        # Створити thumbnails
-        create_thumbnail(file_path, (300, 300), "thumbnails")
-        create_thumbnail(file_path, (800, 800), "medium")
-        
-        # Оновити БД
-        relative_path = f"uploads/products/{filename}"
-        rh_cur.execute("""
-            UPDATE products 
-            SET image_url = %s
-            WHERE product_id = %s
-        """, (relative_path, product_id))
-        rh_conn.commit()
-        
-        return True
-        
-    except Exception as e:
-        return False
-
-
-def sync_product_images():
-    """
-    Синхронізувати зображення для товарів які ще не мають локальних фото
-    Беремо шлях зображення напряму з OpenCart БД
-    """
-    log("🖼️  Syncing product images...")
-    
+def push_quantities_to_opencart():
+    """Push quantities FROM RentalHub TO OpenCart (RH = source of truth)"""
+    log("📊 Pushing quantities RH → OpenCart...")
     try:
         oc = mysql.connector.connect(**OC)
         rh = mysql.connector.connect(**RH)
-        
+        oc_cur = oc.cursor()
+        rh_cur = rh.cursor(dictionary=True)
+
+        rh_cur.execute("SELECT product_id, quantity FROM products WHERE product_id IS NOT NULL")
+        rh_products = rh_cur.fetchall()
+        if not rh_products:
+            log("  ✅ No products to push")
+            oc_cur.close(); rh_cur.close(); oc.close(); rh.close()
+            return 0
+
+        count = 0
+        for p in rh_products:
+            oc_cur.execute(
+                "UPDATE oc_product SET quantity = %s WHERE product_id = %s",
+                (p['quantity'] or 0, p['product_id'])
+            )
+            count += oc_cur.rowcount
+
+        oc.commit()
+        log(f"  ✅ Pushed quantities for {count} products")
+        oc_cur.close(); rh_cur.close(); oc.close(); rh.close()
+        return count
+    except Exception as e:
+        log(f"  ❌ Error: {e}")
+        import traceback; traceback.print_exc()
+        return 0
+
+
+# ============================================================
+# RH → OC: PUSH PRODUCT EDITS (name, sizes, color, image, categories)
+# ============================================================
+def sync_rh_to_opencart_products():
+    """
+    🔁 REVERSE SYNC: push manager edits FROM RentalHub TO OpenCart.
+
+    Only updates products where `updated_at > last_pushed_to_oc` (recently edited).
+    Synced fields: model (sku), name, height/width/depth, color, image, category, subcategory.
+    New RH products that don't exist in OC yet are INSERTed with minimal fields
+    (status=0 — hidden until admin reviews in OC).
+    """
+    log("🔁 Pushing RH product edits → OpenCart...")
+    updated = inserted = errors = 0
+    try:
+        oc = mysql.connector.connect(**OC)
+        rh = mysql.connector.connect(**RH)
         oc_cur = oc.cursor(dictionary=True)
         rh_cur = rh.cursor(dictionary=True)
-        
-        # Знайти товари без локальних зображень
+
+        # 1. Pick only changed products
         rh_cur.execute("""
-            SELECT product_id, sku, image_url 
-            FROM products 
-            WHERE (image_url IS NULL 
-                   OR image_url = '' 
-                   OR image_url NOT LIKE 'uploads/products/%')
-            LIMIT 100
+            SELECT product_id, sku, name, color, image_url,
+                   height_cm, width_cm, depth_cm,
+                   category_name, subcategory_name,
+                   price, rental_price, description, quantity, status
+            FROM products
+            WHERE updated_at IS NOT NULL
+              AND (last_pushed_to_oc IS NULL OR last_pushed_to_oc < updated_at)
+            ORDER BY updated_at ASC
+            LIMIT 500
         """)
-        
-        products_without_images = rh_cur.fetchall()
-        
-        if not products_without_images:
-            log("  ✅ All products have local images")
-            oc_cur.close()
-            rh_cur.close()
-            oc.close()
-            rh.close()
+        changed = rh_cur.fetchall()
+        if not changed:
+            log("  ✓ No changes to push")
+            oc_cur.close(); rh_cur.close(); oc.close(); rh.close()
             return 0
-        
-        log(f"  📦 Found {len(products_without_images)} products without local images")
-        
-        # Отримати ПРАВИЛЬНІ image paths напряму з OpenCart
-        product_ids = [p['product_id'] for p in products_without_images]
-        ids_str = ','.join(map(str, product_ids))
-        
-        oc_cur.execute(f"""
-            SELECT product_id, model as sku, image 
-            FROM oc_product 
-            WHERE product_id IN ({ids_str}) AND image IS NOT NULL AND image != ''
-        """)
-        
-        oc_images = {row['product_id']: row for row in oc_cur.fetchall()}
-        
-        # Скачати зображення
-        success_count = 0
-        failed_count = 0
-        rh_cur_update = rh.cursor()
-        
-        for product in products_without_images:
-            product_id = product['product_id']
-            sku = product['sku']
-            
-            if product_id not in oc_images:
-                continue
-            
-            # Беремо шлях напряму з OpenCart (не з RentalHub!)
-            oc_image = oc_images[product_id]['image']
-            
-            if download_product_image(product_id, sku, oc_image, rh_cur_update, rh):
-                success_count += 1
-                if success_count <= 10 or success_count % 20 == 0:
-                    log(f"    ✅ Downloaded: {sku}")
-            else:
-                failed_count += 1
-                if failed_count <= 5:
-                    log(f"    ⚠️  Failed: {sku}")
-        
-        log(f"  ✅ Downloaded {success_count} images, {failed_count} failed")
-        
-        oc_cur.close()
-        rh_cur.close()
-        rh_cur_update.close()
-        oc.close()
-        rh.close()
-        
-        return success_count
-        
-    except Exception as e:
-        log(f"  ❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return 0
 
+        log(f"  Found {len(changed)} changed products")
 
-# ============================================================
-# SYNC FUNCTIONS
-# ============================================================
-
-def sync_categories():
-    """Sync categories from OpenCart"""
-    log("📁 Syncing categories...")
-    try:
-        oc = mysql.connector.connect(**OC)
-        rh = mysql.connector.connect(**RH)
-        
-        oc_cur = oc.cursor(dictionary=True)
-        rh_cur = rh.cursor()
-        
-        # Get all categories from OpenCart
+        # Preload category_name → category_id map (OpenCart, lang_id=4)
         oc_cur.execute("""
-            SELECT c.category_id, c.parent_id, cd.name, c.sort_order
-            FROM oc_category c
-            JOIN oc_category_description cd ON c.category_id = cd.category_id
+            SELECT cd.category_id, cd.name
+            FROM oc_category_description cd
             WHERE cd.language_id = 4
-            ORDER BY c.parent_id, c.sort_order
         """)
-        
-        categories = oc_cur.fetchall()
-        
-        for cat in categories:
-            rh_cur.execute("""
-                INSERT INTO categories (category_id, parent_id, name, sort_order, created_at)
-                VALUES (%s, %s, %s, %s, NOW())
-                ON DUPLICATE KEY UPDATE
-                    parent_id = VALUES(parent_id),
-                    name = VALUES(name),
-                    sort_order = VALUES(sort_order)
-            """, (cat['category_id'], cat['parent_id'], cat['name'], cat['sort_order']))
-        
-        rh.commit()
-        log(f"  ✅ Synced {len(categories)} categories")
-        
-        oc_cur.close()
-        rh_cur.close()
-        oc.close()
-        rh.close()
-        return len(categories)
-        
-    except Exception as e:
-        log(f"  ❌ Error: {e}")
-        return 0
+        cat_map = {row['name'].strip().lower(): row['category_id'] for row in oc_cur.fetchall()}
 
+        COLOR_ATTR_ID = 13
+        LANG_ID = 4
+        rh_upd = rh.cursor()
 
-def sync_products_incremental():
-    """Sync only new products"""
-    log("📦 Syncing products (incremental)...")
-    try:
-        oc = mysql.connector.connect(**OC)
-        rh = mysql.connector.connect(**RH)
-        
-        oc_cur = oc.cursor(dictionary=True)
-        rh_cur = rh.cursor()
-        
-        # Get existing product IDs
-        rh_cur.execute("SELECT product_id FROM products")
-        existing_ids = set(row[0] for row in rh_cur.fetchall())
-        
-        # Get all active products from OpenCart
-        oc_cur.execute("""
-            SELECT 
-                p.product_id, p.model, pd.name, pd.description, p.price, 
-                p.status, p.image, p.quantity, p.ean,
-                MAX(CASE WHEN ad.name = 'Колір' AND pa.language_id = 4 THEN pa.text END) as color,
-                MAX(CASE WHEN ad.name = 'Матеріал' AND pa.language_id = 4 THEN pa.text END) as material
-            FROM oc_product p
-            JOIN oc_product_description pd ON p.product_id = pd.product_id
-            LEFT JOIN oc_product_attribute pa ON p.product_id = pa.product_id
-            LEFT JOIN oc_attribute_description ad ON pa.attribute_id = ad.attribute_id AND ad.language_id = 4
-            WHERE pd.language_id = 4 AND p.status = 1
-            GROUP BY p.product_id
-        """)
-        
-        all_products = oc_cur.fetchall()
-        new_products = [p for p in all_products if p['product_id'] not in existing_ids]
-        count = 0
-        
-        for p in new_products:
-            sku = p['model'] or f"SKU-{p['product_id']}"
-            
-            # Маппінг полів:
-            # OpenCart price → RentalHub rental_price (ціна оренди за день)
-            # OpenCart ean → RentalHub price (вартість товару/повний збиток)
-            rental_price = float(p['price']) if p.get('price') else 0
-            purchase_price = float(p['ean']) if p.get('ean') else 0
-            
-            rh_cur.execute("""
-                INSERT INTO products (
-                    product_id, sku, name, description, price, rental_price, status, quantity, 
-                    color, material, image_url, synced_at
+        for p in changed:
+            pid = p['product_id']
+            try:
+                # 2. Check existence in OC
+                oc_cur.execute("SELECT product_id, image FROM oc_product WHERE product_id = %s", (pid,))
+                oc_row = oc_cur.fetchone()
+
+                # ----- HANDLE IMAGE: copy file from RH uploads to OC catalog ------
+                oc_image_value = None
+                if p['image_url']:
+                    src_rel = p['image_url'].lstrip('/')
+                    src_path = src_rel
+                    if src_rel.startswith('uploads/'):
+                        src_path = os.path.join(os.path.dirname(PRODUCTS_DIR), src_rel.split('uploads/', 1)[1] if '/' in src_rel else src_rel)
+                        # Above is a no-op fallback; safer:
+                        src_path = '/app/backend/' + src_rel
+                        if not os.path.exists(src_path):
+                            src_path = os.path.join('/home/farforre/farforrent.com.ua/rentalhub/backend', src_rel)
+                    if OC_IMAGE_TARGET_DIR and os.path.exists(src_path):
+                        os.makedirs(OC_IMAGE_TARGET_DIR, exist_ok=True)
+                        fname = os.path.basename(src_path)
+                        dst_path = os.path.join(OC_IMAGE_TARGET_DIR, fname)
+                        try:
+                            import shutil
+                            shutil.copy2(src_path, dst_path)
+                            # OC expects relative path inside its image/ folder
+                            oc_image_value = f"catalog/rentalhub/{fname}"
+                        except Exception as cpe:
+                            log(f"    ⚠️ photo copy failed for {pid}: {cpe}")
+                            oc_image_value = src_rel[:255]
+                    else:
+                        # Best-effort: store whatever we have, admin maps the path
+                        oc_image_value = src_rel[:255]
+
+                if oc_row:
+                    # === UPDATE existing ===
+                    sets, params = [], []
+                    if p['height_cm'] is not None:
+                        sets.append("height = %s"); params.append(float(p['height_cm']))
+                    if p['width_cm'] is not None:
+                        sets.append("width = %s"); params.append(float(p['width_cm']))
+                    if p['depth_cm'] is not None:
+                        sets.append("length = %s"); params.append(float(p['depth_cm']))
+                    if p['sku']:
+                        sets.append("model = %s"); params.append(p['sku'][:64])
+                        sets.append("sku = %s");   params.append(p['sku'][:64])
+                    if oc_image_value and oc_image_value != (oc_row.get('image') or ''):
+                        sets.append("image = %s"); params.append(oc_image_value[:255])
+                    if sets:
+                        sets.append("date_modified = NOW()")
+                        params.append(pid)
+                        oc_cur.execute(f"UPDATE oc_product SET {', '.join(sets)} WHERE product_id = %s", tuple(params))
+
+                    # Update description (name) — lang 4
+                    if p['name']:
+                        oc_cur.execute("""
+                            UPDATE oc_product_description
+                               SET name = %s
+                             WHERE product_id = %s AND language_id = %s
+                        """, (p['name'][:255], pid, LANG_ID))
+                else:
+                    # === INSERT new product (minimal required fields, status=0 — hidden) ===
+                    oc_cur.execute("""
+                        INSERT INTO oc_product
+                            (product_id, model, sku, upc, ean, jan, isbn, mpn, location,
+                             quantity, stock_status_id, image, manufacturer_id, shipping,
+                             price, points, tax_class_id, date_available, weight, weight_class_id,
+                             length, width, height, length_class_id, subtract, minimum,
+                             sort_order, status, viewed, noindex, date_added, date_modified, cost)
+                        VALUES
+                            (%s, %s, %s, '', '', '', '', '', '',
+                             %s, 5, %s, 0, 1,
+                             %s, 0, 9, CURDATE(), 0, 1,
+                             %s, %s, %s, 1, 1, 1,
+                             0, 0, 0, 1, NOW(), NOW(), 0)
+                    """, (
+                        pid, (p['sku'] or f"RH-{pid}")[:64], (p['sku'] or f"RH-{pid}")[:64],
+                        int(p['quantity'] or 0), (oc_image_value or '')[:255],
+                        float(p['rental_price'] or 0),
+                        float(p['depth_cm'] or 0), float(p['width_cm'] or 0), float(p['height_cm'] or 0),
+                    ))
+                    # Description (4 languages aren't all required; we write only UA=4)
+                    oc_cur.execute("""
+                        INSERT INTO oc_product_description
+                            (product_id, language_id, name, description, description_mini, tag,
+                             meta_title, meta_description, meta_keyword, meta_h1)
+                        VALUES (%s, %s, %s, %s, '', '', %s, '', '', %s)
+                    """, (pid, LANG_ID, (p['name'] or '')[:255], (p['description'] or ''),
+                          (p['name'] or '')[:255], (p['name'] or '')[:255]))
+                    inserted += 1
+                    log(f"  ➕ Inserted new OC product {pid} ({p['sku']}) — status=0 (hidden)")
+
+                # === COLOR attribute ===
+                if p['color']:
+                    oc_cur.execute("""
+                        SELECT 1 FROM oc_product_attribute
+                         WHERE product_id = %s AND attribute_id = %s AND language_id = %s
+                    """, (pid, COLOR_ATTR_ID, LANG_ID))
+                    if oc_cur.fetchone():
+                        oc_cur.execute("""
+                            UPDATE oc_product_attribute SET text = %s
+                             WHERE product_id = %s AND attribute_id = %s AND language_id = %s
+                        """, (p['color'][:255], pid, COLOR_ATTR_ID, LANG_ID))
+                    else:
+                        oc_cur.execute("""
+                            INSERT INTO oc_product_attribute (product_id, attribute_id, language_id, text)
+                            VALUES (%s, %s, %s, %s)
+                        """, (pid, COLOR_ATTR_ID, LANG_ID, p['color'][:255]))
+
+                # === CATEGORIES (replace all) ===
+                new_cats = []
+                if p['category_name']:
+                    cid = cat_map.get(p['category_name'].strip().lower())
+                    if cid:
+                        new_cats.append((cid, 1))
+                    else:
+                        log(f"    ⚠️ Category '{p['category_name']}' not in OC (product {pid})")
+                if p['subcategory_name']:
+                    scid = cat_map.get(p['subcategory_name'].strip().lower())
+                    if scid:
+                        new_cats.append((scid, 0))
+                    else:
+                        log(f"    ⚠️ Subcategory '{p['subcategory_name']}' not in OC (product {pid})")
+                if new_cats:
+                    oc_cur.execute("DELETE FROM oc_product_to_category WHERE product_id = %s", (pid,))
+                    for cid, is_main in new_cats:
+                        oc_cur.execute("""
+                            INSERT INTO oc_product_to_category (product_id, category_id, main_category)
+                            VALUES (%s, %s, %s)
+                        """, (pid, cid, is_main))
+
+                # Mark as pushed
+                rh_upd.execute(
+                    "UPDATE products SET last_pushed_to_oc = NOW() WHERE product_id = %s",
+                    (pid,)
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-            """, (
-                p['product_id'], 
-                sku[:100], 
-                p['name'][:500], 
-                (p['description'] or '')[:2000], 
-                purchase_price,  # OpenCart ean → вартість товару
-                rental_price,    # OpenCart price → ціна оренди
-                p['status'], 
-                p['quantity'] or 0,
-                (p['color'] or '')[:100] if p.get('color') else None,
-                (p['material'] or '')[:100] if p.get('material') else None,
-                (p['image'] or '')[:500] if p['image'] else None  # Тимчасово зберігаємо OC path
-            ))
-            count += 1
-        
+                if oc_row:
+                    updated += 1
+
+            except Exception as item_err:
+                errors += 1
+                log(f"  ❌ Product {pid}: {item_err}")
+                continue
+
+        oc.commit()
         rh.commit()
-        log(f"  ✅ Synced {count} new products")
-        
-        oc_cur.close()
-        rh_cur.close()
-        oc.close()
-        rh.close()
-        return count
-        
+        log(f"  ✅ Pushed RH→OC: {updated} updated, {inserted} inserted, {errors} errors")
+        oc_cur.close(); rh_cur.close(); rh_upd.close(); oc.close(); rh.close()
+        return updated + inserted
+
     except Exception as e:
-        log(f"  ❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+        log(f"  ❌ Fatal: {e}")
+        import traceback; traceback.print_exc()
         return 0
 
 
-def sync_product_categories():
-    """Update category info for products"""
-    log("🏷️  Updating product categories...")
-    try:
-        oc = mysql.connector.connect(**OC)
-        rh = mysql.connector.connect(**RH)
-        
-        oc_cur = oc.cursor(dictionary=True)
-        rh_cur = rh.cursor()
-        
-        # Get all products (limit 200 для категорій)
-        rh_cur.execute("SELECT product_id FROM products")
-        product_ids = [row[0] for row in rh_cur.fetchall()]
-        
-        if not product_ids:
-            log("  ✅ No products to update")
-            oc_cur.close()
-            rh_cur.close()
-            oc.close()
-            rh.close()
-            return 0
-        
-        ids_str = ','.join(map(str, product_ids))
-        
-        # Get category mappings
-        oc_cur.execute(f"""
-            SELECT 
-                ptc.product_id, 
-                c.category_id, 
-                cd.name, 
-                c.parent_id, 
-                pcd.name as parent_name
-            FROM oc_product_to_category ptc
-            JOIN oc_category c ON ptc.category_id = c.category_id
-            JOIN oc_category_description cd ON c.category_id = cd.category_id AND cd.language_id = 4
-            LEFT JOIN oc_category pc ON c.parent_id = pc.category_id
-            LEFT JOIN oc_category_description pcd ON pc.category_id = pcd.category_id AND pcd.language_id = 4
-            WHERE ptc.product_id IN ({ids_str})
-        """)
-        
-        count = 0
-        for m in oc_cur.fetchall():
-            if m['parent_id'] == 0:
-                # Top-level category
-                rh_cur.execute("""
-                    UPDATE products 
-                    SET category_id = %s, category_name = %s 
-                    WHERE product_id = %s
-                """, (m['category_id'], m['name'], m['product_id']))
-            else:
-                # Subcategory
-                rh_cur.execute("""
-                    UPDATE products 
-                    SET category_id = %s, category_name = %s, 
-                        subcategory_id = %s, subcategory_name = %s
-                    WHERE product_id = %s
-                """, (m['parent_id'], m['parent_name'], m['category_id'], m['name'], m['product_id']))
-            count += 1
-        
-        rh.commit()
-        log(f"  ✅ Updated {count} products")
-        
-        oc_cur.close()
-        rh_cur.close()
-        oc.close()
-        rh.close()
-        return count
-        
-    except Exception as e:
-        log(f"  ❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return 0
-
-
-def sync_product_quantities():
-    """Update quantities, prices, SKU and dimensions (color/material managed locally in RentalHub)"""
-    log("📊 Updating product details (sku, quantity, price, dimensions)...")
-    try:
-        oc = mysql.connector.connect(**OC)
-        rh = mysql.connector.connect(**RH)
-        
-        oc_cur = oc.cursor(dictionary=True)
-        rh_cur = rh.cursor()
-        
-        # Get all products (limit 10000 для оновлення)
-        rh_cur.execute("SELECT product_id FROM products LIMIT 10000")
-        product_ids = [row[0] for row in rh_cur.fetchall()]
-        
-        if not product_ids:
-            log("  ✅ No products to update")
-            oc_cur.close()
-            rh_cur.close()
-            oc.close()
-            rh.close()
-            return 0
-        
-        ids_str = ','.join(map(str, product_ids))
-        
-        # Get updated data from OpenCart (sku, quantity, price, ean + dimensions)
-        oc_cur.execute(f"""
-            SELECT p.product_id, p.model as sku, p.quantity, p.price, p.ean,
-                   p.height, p.width, p.length
-            FROM oc_product p
-            WHERE p.product_id IN ({ids_str})
-        """)
-        
-        count = 0
-        dims_count = 0
-        for p in oc_cur.fetchall():
-            # Маппінг полів:
-            # OpenCart model → RentalHub sku (артикул)
-            # OpenCart price → RentalHub rental_price (ціна оренди за день)
-            # OpenCart ean → RentalHub price (вартість товару/повний збиток)
-            sku = (p['sku'] or f"SKU-{p['product_id']}")[:100]
-            rental_price = float(p['price']) if p.get('price') else 0
-            purchase_price = float(p['ean']) if p.get('ean') else 0
-            
-            # Розміри: OC height→height_cm, OC width→width_cm, OC length→depth_cm
-            # diameter_cm — не чіпаємо (заповнюється з переобліку)
-            oc_height = float(p['height'] or 0) if p['height'] else None
-            oc_width = float(p['width'] or 0) if p['width'] else None
-            oc_depth = float(p['length'] or 0) if p['length'] else None
-            
-            has_dims = (oc_height and oc_height > 0) or (oc_width and oc_width > 0) or (oc_depth and oc_depth > 0)
-            
-            # ⚠️ НЕ оновлюємо color та material - вони керуються локально в RentalHub
-            # ✅ SKU оновлюється з OpenCart
-            # ✅ Розміри: COALESCE — тільки якщо в RH ще NULL (не перезаписуємо ручні дані з переобліку)
-            rh_cur.execute("""
-                UPDATE products 
-                SET sku = %s, quantity = %s, price = %s, rental_price = %s,
-                    height_cm = COALESCE(height_cm, %s),
-                    width_cm = COALESCE(width_cm, %s),
-                    depth_cm = COALESCE(depth_cm, %s)
-                WHERE product_id = %s
-            """, (
-                sku,             # OpenCart model → артикул
-                p['quantity'] or 0, 
-                purchase_price,  # OpenCart ean → вартість товару
-                rental_price,    # OpenCart price → ціна оренди
-                oc_height if oc_height and oc_height > 0 else None,
-                oc_width if oc_width and oc_width > 0 else None,
-                oc_depth if oc_depth and oc_depth > 0 else None,
-                p['product_id']
-            ))
-            if rh_cur.rowcount > 0:
-                count += 1
-            if has_dims:
-                dims_count += 1
-        
-        rh.commit()
-        log(f"  ✅ Updated {count} products ({dims_count} with dimensions, color/material preserved)")
-        
-        oc_cur.close()
-        rh_cur.close()
-        oc.close()
-        rh.close()
-        return count
-        
-    except Exception as e:
-        log(f"  ❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
-        return 0
-
-
+# ============================================================
+# OC → RH: PULL NEW ORDERS  (the ONLY direction OC → RH that we keep)
+# ============================================================
 def sync_orders_from_opencart():
     """
-    ✅ PRODUCTION VERSION
-    Синхронізує НОВІ замовлення з OpenCart (order_status_id = 2 "В обробці")
-    Використовує правильні назви колонок: total_price, deposit_amount
+    ✅ Pull NEW orders from OpenCart (order_status_id = 2 "В обробці")
+    After import, switch OC status to 29 (Sent to RH).
     """
     log("📋 Syncing NEW orders from OpenCart...")
-    
     try:
         oc_conn = mysql.connector.connect(**OC)
         rh_conn = mysql.connector.connect(**RH)
-        
         oc_cur = oc_conn.cursor(dictionary=True)
         rh_cur = rh_conn.cursor()
-        
-        # Знайти останнє синхронізоване замовлення
+
         rh_cur.execute("SELECT MAX(order_id) FROM orders")
         last_synced = rh_cur.fetchone()[0] or 0
         log(f"  📍 Last synced order_id: {last_synced}")
-        
-        # Витягнути НОВІ замовлення зі статусом 2 (В обробці)
+
         oc_cur.execute("""
-            SELECT 
-                o.order_id,
-                o.order_status_id,
-                o.customer_id,
-                o.firstname,
-                o.lastname,
-                o.email,
-                o.telephone,
-                o.total,
-                o.date_added,
-                o.comment,
-                osf.rent_issue_date,
-                osf.rent_return_date
+            SELECT
+                o.order_id, o.order_status_id, o.customer_id,
+                o.firstname, o.lastname, o.email, o.telephone,
+                o.total, o.date_added, o.comment,
+                osf.rent_issue_date, osf.rent_return_date
             FROM oc_order o
             LEFT JOIN oc_order_simple_fields osf ON o.order_id = osf.order_id
             WHERE o.order_status_id = 2
@@ -650,43 +374,28 @@ def sync_orders_from_opencart():
             ORDER BY o.order_id ASC
             LIMIT 50
         """, (last_synced,))
-        
         new_orders = oc_cur.fetchall()
         log(f"  📦 Found {len(new_orders)} new orders with status=2")
-        
+
         synced_count = 0
-        
         for order in new_orders:
             order_id = order['order_id']
             customer_name = f"{order['firstname']} {order['lastname']}".strip()
-            
-            # Отримати товари замовлення з EAN для розрахунку депозиту
+
             oc_cur.execute("""
-                SELECT 
-                    op.order_product_id,
-                    op.product_id,
-                    op.name as product_name,
-                    op.model as sku,
-                    op.quantity,
-                    op.price,
-                    op.total,
-                    p.image,
-                    p.ean
+                SELECT op.order_product_id, op.product_id, op.name as product_name,
+                       op.model as sku, op.quantity, op.price, op.total,
+                       p.image, p.ean
                 FROM oc_order_product op
                 LEFT JOIN oc_product p ON op.product_id = p.product_id
                 WHERE op.order_id = %s
             """, (order_id,))
-            
             order_items = oc_cur.fetchall()
-            
             if not order_items:
-                log(f"  ⚠️  Order {order_id} has no items, skipping")
+                log(f"  ⚠️ Order {order_id} has no items, skipping")
                 continue
-            
-            # Розрахунки
+
             total_rental = sum(float(item['total'] or 0) for item in order_items)
-            
-            # Deposit = sum(EAN / 2 * quantity)
             total_deposit = 0
             total_loss_value = 0
             for item in order_items:
@@ -694,12 +403,9 @@ def sync_orders_from_opencart():
                 quantity = int(item['quantity'])
                 total_deposit += (ean_value / 2) * quantity
                 total_loss_value += ean_value * quantity
-            
-            # Dates
+
             rental_start = order['rent_issue_date'] or order['date_added'].date()
             rental_end = order['rent_return_date'] or order['date_added'].date()
-            
-            # Calculate rental days
             rental_days = None
             if rental_start and rental_end:
                 from datetime import datetime as dt
@@ -710,143 +416,110 @@ def sync_orders_from_opencart():
                 rental_days = (rental_end - rental_start).days
                 if rental_days < 1:
                     rental_days = 1
-            
-            # Додати замовлення (використовуємо total_price замість total_amount)
+
             try:
                 rh_cur.execute("""
                     INSERT INTO orders (
-                        order_id, order_number, customer_id, customer_name, 
+                        order_id, order_number, customer_id, customer_name,
                         customer_phone, customer_email,
                         rental_start_date, rental_end_date, rental_days,
                         status, total_price, deposit_amount, total_loss_value,
                         notes, created_at, synced_at
-                    ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
-                    )
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 """, (
-                    order_id,
-                    f"OC-{order_id}",
-                    order['customer_id'],
-                    customer_name,
-                    order['telephone'],
-                    order['email'],
-                    rental_start,
-                    rental_end,
-                    rental_days,
-                    'awaiting_customer',  # Правильний статус для дашборду
-                    total_rental,
-                    total_deposit,
-                    total_loss_value,
-                    order['comment'],
-                    order['date_added']
+                    order_id, f"OC-{order_id}", order['customer_id'], customer_name,
+                    order['telephone'], order['email'],
+                    rental_start, rental_end, rental_days,
+                    'awaiting_customer',
+                    total_rental, total_deposit, total_loss_value,
+                    order['comment'], order['date_added']
                 ))
-                
-                # Додати товари
+
                 for item in order_items:
-                    # Format image URL
-                    image_url = None
-                    if item['image']:
-                        image_url = f"https://www.farforrent.com.ua/image/{item['image']}"
-                    
+                    image_url = f"https://www.farforrent.com.ua/image/{item['image']}" if item['image'] else None
                     rh_cur.execute("""
                         INSERT INTO order_items (
-                            order_id, product_id, product_name, 
+                            order_id, product_id, product_name,
                             quantity, price, total_rental, image_url
-                        ) VALUES (
-                            %s, %s, %s, %s, %s, %s, %s
-                        )
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        order_id,
-                        item['product_id'],
-                        item['product_name'],
-                        item['quantity'],
-                        item['price'],
-                        item['total'],
-                        image_url
+                        order_id, item['product_id'], item['product_name'],
+                        item['quantity'], item['price'], item['total'], image_url
                     ))
-                
-                # ✅ Якщо є коментар клієнта - записати у внутрішній чат
+
                 client_comment = order.get('comment', '').strip() if order.get('comment') else ''
                 if client_comment:
                     rh_cur.execute("""
-                        INSERT INTO order_internal_notes 
-                        (order_id, user_id, user_name, message, created_at)
+                        INSERT INTO order_internal_notes
+                            (order_id, user_id, user_name, message, created_at)
                         VALUES (%s, %s, %s, %s, NOW())
-                    """, (
-                        order_id,
-                        None,
-                        '💬 Коментар клієнта',
-                        client_comment
-                    ))
-                
-                # ✅ Автостворення/прив'язка клієнта (тільки по email)
+                    """, (order_id, None, '💬 Коментар клієнта', client_comment))
+
                 try:
                     client_user_id = ensure_client_from_order(
-                        rh_cur, customer_name, 
-                        order['telephone'], order['email']
+                        rh_cur, customer_name, order['telephone'], order['email']
                     )
                     if client_user_id:
-                        rh_cur.execute("""
-                            UPDATE orders SET client_user_id = %s WHERE order_id = %s
-                        """, (client_user_id, order_id))
+                        rh_cur.execute(
+                            "UPDATE orders SET client_user_id = %s WHERE order_id = %s",
+                            (client_user_id, order_id)
+                        )
                 except Exception as ce:
-                    log(f"  ⚠️  Client auto-create error for order {order_id}: {ce}")
-                
+                    log(f"  ⚠️ Client auto-create error for order {order_id}: {ce}")
+
                 rh_conn.commit()
                 synced_count += 1
-                log(f"  ✅ Synced order #{order_id} ({customer_name})" + (f" + comment" if client_comment else ""))
-                
+                log(f"  ✅ Synced order #{order_id} ({customer_name})" + (" + comment" if client_comment else ""))
+
+                # Flip OC status to 29 (sent to RH)
+                oc_cur.execute("UPDATE oc_order SET order_status_id = 29 WHERE order_id = %s", (order_id,))
+                oc_conn.commit()
+                log(f"  ✅ OC #{order_id} → status 29")
+
             except mysql.connector.IntegrityError:
-                log(f"  ⚠️  Order {order_id} already exists")
+                log(f"  ⚠️ Order {order_id} already exists")
                 continue
-        
+
         log(f"  ✅ Successfully synced {synced_count} new orders")
-        
-        oc_cur.close()
-        rh_cur.close()
-        oc_conn.close()
-        rh_conn.close()
-        
+        oc_cur.close(); rh_cur.close(); oc_conn.close(); rh_conn.close()
         return synced_count
-        
+
     except Exception as e:
         log(f"  ❌ Error: {e}")
-        import traceback
-        traceback.print_exc()
+        import traceback; traceback.print_exc()
         return 0
 
 
+# ============================================================
+# MAIN
+# ============================================================
 def main():
     print("=" * 60)
-    print("🔄 RENTALHUB AUTO-SYNC (PRODUCTION)")
+    print("🔄 RENTALHUB ↔ OPENCART SYNC (RH = source of truth)")
     print("=" * 60)
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Images dir: {PRODUCTS_DIR}\n")
-    
+    print(f"Images dir: {PRODUCTS_DIR}")
+    print(f"OC image target: {OC_IMAGE_TARGET_DIR or '(not detected — image paths stored as-is)'}\n")
+
     total_start = time.time()
-    
-    # Sync everything
-    cat_count = sync_categories()
-    prod_count = sync_products_incremental()
-    cat_update_count = sync_product_categories()
-    qty_update_count = sync_product_quantities()
-    
-    # 🖼️ NEW: Download images for products without local photos
-    img_count = sync_product_images()
-    
+
+    # 1. Pull new orders FROM OpenCart (the only OC→RH direction we keep)
     order_count = sync_orders_from_opencart()
-    
+
+    # 2. Push product edits TO OpenCart (name, sizes, color, image, categories)
+    pushed_count = sync_rh_to_opencart_products()
+
+    # 3. Push quantities TO OpenCart
+    qty_count = push_quantities_to_opencart()
+
     total_duration = time.time() - total_start
-    
+
     print("\n" + "=" * 60)
     print("✅ SYNC COMPLETED")
     print("=" * 60)
-    print(f"Categories: {cat_count}")
-    print(f"New products: {prod_count}")
-    print(f"Category updates: {cat_update_count}")
-    print(f"Quantity updates: {qty_update_count}")
-    print(f"🖼️  Images downloaded: {img_count}")
-    print(f"📦 NEW ORDERS: {order_count}")
+    print(f"📦 NEW ORDERS pulled: {order_count}")
+    print(f"🔁 RH→OC products pushed: {pushed_count}")
+    print(f"📊 Qty rows updated in OC: {qty_count}")
     print(f"Duration: {total_duration:.1f}s")
     print("=" * 60)
 

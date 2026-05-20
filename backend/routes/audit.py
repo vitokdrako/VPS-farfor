@@ -1206,20 +1206,26 @@ async def create_item(
         sku = (data.get('code') or '').strip()
         if not name:
             raise HTTPException(status_code=400, detail="Назва обов'язкова")
-        if not sku:
-            raise HTTPException(status_code=400, detail="SKU обов'язковий")
 
-        # SKU uniqueness
+        # Next product_id (used for SKU autogeneration too)
+        next_id_row = rh_db.execute(text("SELECT COALESCE(MAX(product_id), 0) + 1 FROM products")).fetchone()
+        new_product_id = int(next_id_row[0] or 1)
+
+        # Auto-generate SKU if not provided: RH-{product_id}
+        if not sku:
+            sku = f"RH-{new_product_id}"
+
+        # SKU uniqueness (in case manager typed an existing one OR autogen collides)
         existing = rh_db.execute(
             text("SELECT product_id FROM products WHERE sku = :sku LIMIT 1"),
             {"sku": sku}
         ).fetchone()
         if existing:
-            raise HTTPException(status_code=409, detail=f"SKU '{sku}' вже існує (товар #{existing[0]})")
-
-        # Next product_id
-        next_id_row = rh_db.execute(text("SELECT COALESCE(MAX(product_id), 0) + 1 FROM products")).fetchone()
-        new_product_id = int(next_id_row[0] or 1)
+            # If autogen collided (theoretically impossible but defensive) — try one more
+            if not data.get('code'):
+                sku = f"RH-{new_product_id}-{int(__import__('time').time()) % 10000}"
+            else:
+                raise HTTPException(status_code=409, detail=f"SKU '{sku}' вже існує (товар #{existing[0]})")
 
         # Build INSERT params
         params = {
