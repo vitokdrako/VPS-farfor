@@ -37,10 +37,11 @@ PRODUCTION_DIR = "/home/farforre/farforrent.com.ua/rentalhub/backend/uploads/pro
 LOCAL_DIR = "/app/backend/uploads/products"
 PRODUCTS_DIR = PRODUCTION_DIR if os.path.exists(os.path.dirname(PRODUCTION_DIR)) else LOCAL_DIR
 
-# OC image catalog (used when reverse-pushing photos)
+# OC image catalog — same folder OpenCart traditionally uses for product photos
+# Physical path on server (web-accessible at https://farforrent.com.ua/image/catalog/products/)
 OC_IMAGE_BASE_DIR_CANDIDATES = [
-    "/home/farforre/farforrent.com.ua/image/catalog/rentalhub",
-    "/var/www/farforrent.com.ua/image/catalog/rentalhub",
+    "/home/farforre/farforrent.com.ua/image/catalog/products",
+    "/var/www/farforrent.com.ua/image/catalog/products",
 ]
 OC_IMAGE_TARGET_DIR = next((p for p in OC_IMAGE_BASE_DIR_CANDIDATES if os.path.exists(os.path.dirname(p))), None)
 
@@ -211,8 +212,8 @@ def sync_rh_to_opencart_products():
                         try:
                             import shutil
                             shutil.copy2(src_path, dst_path)
-                            # OC expects relative path inside its image/ folder
-                            oc_image_value = f"catalog/rentalhub/{fname}"
+                            # OC expects path relative to /image/ folder
+                            oc_image_value = f"catalog/products/{fname}"
                         except Exception as cpe:
                             log(f"    ⚠️ photo copy failed for {pid}: {cpe}")
                             oc_image_value = src_rel[:255]
