@@ -782,6 +782,13 @@ export default function ReauditCabinetFull({ onBackToDashboard, onNavigateToTask
   useEffect(() => { loadStats(); loadCategories(); loadDicts() }, [])
   useEffect(() => { setPage(1); loadItems() }, [loadItems])
 
+  // Sync selectedItem with fresh data after items reload (fixes stale modal after edit)
+  useEffect(() => {
+    if (!selectedItem) return
+    const fresh = items.find((i: any) => i.id === selectedItem.id)
+    if (fresh && fresh !== selectedItem) setSelectedItem(fresh)
+  }, [items])
+
   const paginatedItems = useMemo(() => items.slice(0, page * PAGE_SIZE), [items, page])
   const hasMore = page * PAGE_SIZE < items.length
 
