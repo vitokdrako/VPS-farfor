@@ -530,6 +530,13 @@ export default function ManagerDashboard() {
               Календар
             </button>
             <button 
+              className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-100 transition-colors"
+              onClick={() => navigate('/manager/picking-list')}
+              data-testid="picking-list-nav-btn"
+            >
+              📋 Збір
+            </button>
+            <button 
               className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
               onClick={() => navigate('/catalog')}
             >
