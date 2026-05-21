@@ -35,6 +35,9 @@ export default function ManagerDashboard() {
   const [mergeMode, setMergeMode] = useState(false);
   const [selectedForMerge, setSelectedForMerge] = useState([]);
 
+  // ✅ Перемикач "Сьогодні / Всі": показувати тільки сьогоднішні картки
+  const [todayOnly, setTodayOnly] = useState(false);
+
   // Завантажити дані користувача
   useEffect(() => {
     const userData = localStorage.getItem('user');
@@ -369,15 +372,30 @@ export default function ManagerDashboard() {
   );
   
   // Issue Cards (картки видачі) по статусам - ВСІ без фільтрації по даті:
-  const preparationCards = issueCards.filter(c => c.status === 'preparation');
-  const readyCards = issueCards.filter(c => 
+  const preparationCardsAll = issueCards.filter(c => c.status === 'preparation');
+  const readyCardsAll = issueCards.filter(c => 
     c.status === 'ready' || 
     c.status === 'ready_for_issue'
   );
   const issuedCards = issueCards.filter(c => c.status === 'issued');
   
   // 4. На поверненні - ВСІ issue cards що видані (статус 'issued')
-  const returnOrders = issueCards.filter(c => c.status === 'issued');
+  const returnOrdersAll = issueCards.filter(c => c.status === 'issued');
+
+  // ✅ "Сьогодні": фільтр карток за датою видачі/повернення
+  const todayStr = new Date().toISOString().slice(0, 10);  // YYYY-MM-DD у локальному часі
+  const isTodayIssue = (c) => {
+    const d = c.rental_start_date || c.issue_date;
+    return d && String(d).slice(0, 10) === todayStr;
+  };
+  const isTodayReturn = (c) => {
+    const d = c.rental_end_date || c.return_date;
+    return d && String(d).slice(0, 10) === todayStr;
+  };
+
+  const preparationCards = todayOnly ? preparationCardsAll.filter(isTodayIssue) : preparationCardsAll;
+  const readyCards       = todayOnly ? readyCardsAll.filter(isTodayIssue)       : readyCardsAll;
+  const returnOrders     = todayOnly ? returnOrdersAll.filter(isTodayReturn)    : returnOrdersAll;
   
   // 5. Часткові повернення - ТЕПЕР беремо з окремої таблиці версій
   // Старі картки з partial_return статусом ігноруємо - вони тепер в архіві
@@ -413,6 +431,28 @@ export default function ManagerDashboard() {
             >
               🔗 {mergeMode ? 'Скасувати' : 'Об\'єднати'}
             </button>
+
+            {/* ✅ Перемикач "Сьогодні / Всі" */}
+            <div className="flex bg-slate-100 rounded-lg p-1" data-testid="today-toggle">
+              <button
+                onClick={() => setTodayOnly(false)}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                  !todayOnly ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+                data-testid="toggle-all-btn"
+              >
+                Всі
+              </button>
+              <button
+                onClick={() => setTodayOnly(true)}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1 ${
+                  todayOnly ? 'bg-corp-primary text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+                data-testid="toggle-today-btn"
+              >
+                📅 Сьогодні
+              </button>
+            </div>
             
             {/* Панель об'єднання */}
             {mergeMode && selectedForMerge.length > 0 && (
