@@ -35,8 +35,8 @@ export default function ManagerDashboard() {
   const [mergeMode, setMergeMode] = useState(false);
   const [selectedForMerge, setSelectedForMerge] = useState([]);
 
-  // ✅ Перемикач "Сьогодні / Всі": показувати тільки сьогоднішні картки
-  const [todayOnly, setTodayOnly] = useState(false);
+  // ✅ Перемикач "Всі / День": null = всі, інакше зсув в днях від сьогодні (0=сьогодні, 1=завтра, ...)
+  const [dayOffset, setDayOffset] = useState(null);
 
   // Завантажити дані користувача
   useEffect(() => {
@@ -382,20 +382,27 @@ export default function ManagerDashboard() {
   // 4. На поверненні - ВСІ issue cards що видані (статус 'issued')
   const returnOrdersAll = issueCards.filter(c => c.status === 'issued');
 
-  // ✅ "Сьогодні": фільтр карток за датою видачі/повернення
-  const todayStr = new Date().toISOString().slice(0, 10);  // YYYY-MM-DD у локальному часі
-  const isTodayIssue = (c) => {
+  // ✅ Дата для фільтру (зсув від сьогодні)
+  const filterDate = (() => {
+    if (dayOffset === null) return null;
+    const d = new Date();
+    d.setDate(d.getDate() + dayOffset);
+    return d.toISOString().slice(0, 10);  // YYYY-MM-DD
+  })();
+  const isMatchIssue = (c) => {
+    if (!filterDate) return true;
     const d = c.rental_start_date || c.issue_date;
-    return d && String(d).slice(0, 10) === todayStr;
+    return d && String(d).slice(0, 10) === filterDate;
   };
-  const isTodayReturn = (c) => {
+  const isMatchReturn = (c) => {
+    if (!filterDate) return true;
     const d = c.rental_end_date || c.return_date;
-    return d && String(d).slice(0, 10) === todayStr;
+    return d && String(d).slice(0, 10) === filterDate;
   };
 
-  const preparationCards = todayOnly ? preparationCardsAll.filter(isTodayIssue) : preparationCardsAll;
-  const readyCards       = todayOnly ? readyCardsAll.filter(isTodayIssue)       : readyCardsAll;
-  const returnOrders     = todayOnly ? returnOrdersAll.filter(isTodayReturn)    : returnOrdersAll;
+  const preparationCards = preparationCardsAll.filter(isMatchIssue);
+  const readyCards       = readyCardsAll.filter(isMatchIssue);
+  const returnOrders     = returnOrdersAll.filter(isMatchReturn);
   
   // 5. Часткові повернення - ТЕПЕР беремо з окремої таблиці версій
   // Старі картки з partial_return статусом ігноруємо - вони тепер в архіві
@@ -432,26 +439,58 @@ export default function ManagerDashboard() {
               🔗 {mergeMode ? 'Скасувати' : 'Об\'єднати'}
             </button>
 
-            {/* ✅ Перемикач "Сьогодні / Всі" */}
-            <div className="flex bg-slate-100 rounded-lg p-1" data-testid="today-toggle">
+            {/* ✅ Перемикач "Всі / День" з гортанням по днях */}
+            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1" data-testid="day-filter">
               <button
-                onClick={() => setTodayOnly(false)}
+                onClick={() => setDayOffset(null)}
                 className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                  !todayOnly ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                  dayOffset === null ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                 }`}
-                data-testid="toggle-all-btn"
+                data-testid="filter-all-btn"
               >
                 Всі
               </button>
-              <button
-                onClick={() => setTodayOnly(true)}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1 ${
-                  todayOnly ? 'bg-corp-primary text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}
-                data-testid="toggle-today-btn"
-              >
-                📅 Сьогодні
-              </button>
+              <div className={`flex items-center gap-0.5 rounded-md transition-colors ${
+                dayOffset !== null ? 'bg-corp-primary text-white shadow-sm' : ''
+              }`}>
+                <button
+                  onClick={() => setDayOffset(o => (o === null ? 0 : o - 1))}
+                  title="Назад на день"
+                  className={`px-2 py-1.5 rounded-l-md text-sm font-bold transition-colors ${
+                    dayOffset !== null ? 'hover:bg-white/15' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200'
+                  }`}
+                  data-testid="filter-prev-day"
+                >
+                  ‹
+                </button>
+                <button
+                  onClick={() => setDayOffset(0)}
+                  className={`px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors ${
+                    dayOffset === null ? 'text-slate-500 hover:text-slate-700 hover:bg-slate-200 rounded-md' : ''
+                  }`}
+                  data-testid="filter-day-label"
+                >
+                  {(() => {
+                    if (dayOffset === null) return '📅 Сьогодні';
+                    if (dayOffset === 0) return 'Сьогодні';
+                    if (dayOffset === 1) return 'Завтра';
+                    if (dayOffset === -1) return 'Вчора';
+                    const d = new Date();
+                    d.setDate(d.getDate() + dayOffset);
+                    return d.toLocaleDateString('uk-UA', { day: '2-digit', month: 'short', weekday: 'short' });
+                  })()}
+                </button>
+                <button
+                  onClick={() => setDayOffset(o => (o === null ? 0 : o + 1))}
+                  title="Вперед на день"
+                  className={`px-2 py-1.5 rounded-r-md text-sm font-bold transition-colors ${
+                    dayOffset !== null ? 'hover:bg-white/15' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200'
+                  }`}
+                  data-testid="filter-next-day"
+                >
+                  ›
+                </button>
+              </div>
             </div>
             
             {/* Панель об'єднання */}
