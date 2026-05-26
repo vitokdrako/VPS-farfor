@@ -305,33 +305,41 @@ function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard 
             </div>
             <ul className="space-y-1.5">
               {zone.items.map(it => (
-                <li key={`${it.product_id}-${it.sku}`} className="flex items-center gap-3 text-sm group">
-                  {/* Checkbox (only for prep/ready, not awaiting) */}
-                  {kind !== 'awaiting' && (
-                    <input type="checkbox"
-                      checked={!!checked[it.product_id]}
-                      onChange={() => onToggle(it.product_id)}
-                      className="w-4 h-4 rounded text-corp-primary focus:ring-1 focus:ring-corp-primary cursor-pointer print:hidden"
-                      data-testid={`check-${cardId}-${it.product_id}`} />
-                  )}
-                  {/* Image thumb */}
-                  <img src={getImageUrl(it.image_url, 'thumb') || FALLBACK_IMAGE} alt={it.name}
-                    onError={handleImageError}
-                    className="w-10 h-10 object-contain rounded bg-white border border-slate-100 flex-shrink-0 print:w-6 print:h-6" />
-                  {/* SKU */}
-                  <span className="text-xs text-slate-500 font-mono w-20 flex-shrink-0">{it.sku}</span>
-                  {/* Name */}
-                  <span className={`flex-1 min-w-0 truncate ${checked[it.product_id] ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
-                    {it.name}
-                  </span>
-                  {/* Damage warning */}
-                  {it.has_damage_history && (
-                    <span title="Має історію шкоди" className="text-amber-500 flex-shrink-0">
-                      <AlertTriangle className="w-4 h-4" />
+                <li key={`${it.product_id}-${it.sku}`} className="flex flex-col gap-1 text-sm group">
+                  <div className="flex items-center gap-3">
+                    {/* Checkbox (only for prep/ready, not awaiting) */}
+                    {kind !== 'awaiting' && (
+                      <input type="checkbox"
+                        checked={!!checked[it.product_id]}
+                        onChange={() => onToggle(it.product_id)}
+                        className="w-4 h-4 rounded text-corp-primary focus:ring-1 focus:ring-corp-primary cursor-pointer print:hidden"
+                        data-testid={`check-${cardId}-${it.product_id}`} />
+                    )}
+                    {/* Image thumb */}
+                    <img src={getImageUrl(it.image_url, 'thumb') || FALLBACK_IMAGE} alt={it.name}
+                      onError={handleImageError}
+                      className="w-10 h-10 object-contain rounded bg-white border border-slate-100 flex-shrink-0 print:w-6 print:h-6" />
+                    {/* SKU */}
+                    <span className="text-xs text-slate-500 font-mono w-20 flex-shrink-0">{it.sku}</span>
+                    {/* Name */}
+                    <span className={`flex-1 min-w-0 truncate ${checked[it.product_id] ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
+                      {it.name}
                     </span>
+                    {/* Damage warning */}
+                    {it.has_damage_history && (
+                      <span title="Має історію шкоди" className="text-amber-500 flex-shrink-0">
+                        <AlertTriangle className="w-4 h-4" />
+                      </span>
+                    )}
+                    {/* Qty */}
+                    <span className="font-bold text-slate-800 text-sm w-12 text-right flex-shrink-0">× {it.qty}</span>
+                  </div>
+                  {/* Components — additional items that go with this product */}
+                  {it.components && (
+                    <div className={`ml-7 ${kind !== 'awaiting' ? 'sm:ml-11' : ''} pl-3 border-l-2 border-sky-200 text-xs text-slate-600 italic print:ml-4`}>
+                      <span className="not-italic font-semibold text-sky-700">+ комплект:</span> {it.components}
+                    </div>
                   )}
-                  {/* Qty */}
-                  <span className="font-bold text-slate-800 text-sm w-12 text-right flex-shrink-0">× {it.qty}</span>
                 </li>
               ))}
             </ul>

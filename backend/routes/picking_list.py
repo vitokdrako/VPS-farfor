@@ -31,12 +31,12 @@ def _enrich_items_with_zone(items: list, db: Session) -> list:
         return items
 
     placeholders = ",".join(str(p) for p in product_ids)
-    # zones + image
+    # zones + image + components
     p_rows = db.execute(text(f"""
-        SELECT product_id, zone, image_url, sku, name
+        SELECT product_id, zone, image_url, sku, name, components
         FROM products WHERE product_id IN ({placeholders})
     """)).fetchall()
-    by_pid = {r[0]: {"zone": r[1], "image_url": r[2], "sku": r[3], "name": r[4]} for r in p_rows}
+    by_pid = {r[0]: {"zone": r[1], "image_url": r[2], "sku": r[3], "name": r[4], "components": r[5]} for r in p_rows}
 
     # damage history flag (any damage = warning)
     dmg_rows = db.execute(text(f"""
@@ -61,6 +61,7 @@ def _enrich_items_with_zone(items: list, db: Session) -> list:
             "qty": it.get("qty") or it.get("quantity") or 1,
             "zone": info.get("zone") or "Без зони",
             "image_url": info.get("image_url"),
+            "components": info.get("components") or "",
             "has_damage_history": bool(dmg_count.get(pid, 0)) if pid else False,
         })
     return enriched
@@ -160,7 +161,7 @@ async def get_picking_list(
         for ar in aw_rows:
             oid = ar[0]
             items_rows = db.execute(text("""
-                SELECT oi.product_id, oi.product_name, oi.quantity, p.zone, p.image_url, p.sku
+                SELECT oi.product_id, oi.product_name, oi.quantity, p.zone, p.image_url, p.sku, p.components
                 FROM order_items oi
                 LEFT JOIN products p ON p.product_id = oi.product_id
                 WHERE oi.order_id = :oid
@@ -178,6 +179,7 @@ async def get_picking_list(
                     "zone": z,
                     "image_url": ir[4],
                     "sku": ir[5] or "",
+                    "components": ir[6] or "",
                     "has_damage_history": False,
                 })
             result["awaiting_orders"].append({

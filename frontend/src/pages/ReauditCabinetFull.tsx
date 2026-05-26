@@ -363,7 +363,7 @@ function TabEdit({ item, categories, subcategoriesMap, hashtags: hashtagDict, sh
     colors: parseList(item.color || ''), materials: parseList(item.material || ''),
     category: item.categoryName || '', subcategory: item.subcategoryName || '',
     height: item.heightCm || '', width: item.widthCm || '', depth: item.depthCm || '', diameter: item.diameterCm || '',
-    shape: item.shape || '', hashtags: item.hashtags || [],
+    shape: item.shape || '', components: item.components || '', hashtags: item.hashtags || [],
     qty: item.qty || 0, zone: item.zone || '',
     description: item.description || '', careInstructions: item.careInstructions || '',
   })
@@ -451,6 +451,19 @@ function TabEdit({ item, categories, subcategoriesMap, hashtags: hashtagDict, sh
         <div><label className="block text-corp-text-muted mb-1">Кількість</label>
           <input type="number" value={form.qty} onChange={e => f('qty', Number(e.target.value))} min={0}
             className="w-full rounded-lg border border-corp-border px-3 py-2 text-sm" data-testid="edit-qty" /></div>
+      </div>
+      <div>
+        <label className="block text-corp-text-muted mb-1">
+          Комплектація <span className="text-corp-text-muted/70">(що ще йде з товаром, через кому або з нового рядка)</span>
+        </label>
+        <textarea
+          value={form.components}
+          onChange={e => f('components', e.target.value)}
+          rows={2}
+          placeholder="напр.: підставка, 2 свічки, дзеркальна тарілка"
+          className="w-full rounded-lg border border-corp-border px-3 py-2 text-sm"
+          data-testid="edit-components"
+        />
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div><label className="block text-corp-text-muted mb-1">Висота (см)</label>
@@ -735,7 +748,7 @@ function CreateProductModal({ onClose, onCreated, categories, subcategoriesMap, 
     name: '', code: '', price: 0, rentalPrice: 0,
     color: '', material: '', categoryName: '', subcategoryName: '',
     heightCm: '', widthCm: '', depthCm: '', diameterCm: '',
-    shape: '', hashtags: [], qty: 0, zone: '',
+    shape: '', components: '', hashtags: [], qty: 0, zone: '',
     description: '', careInstructions: '',
   }
   // If duplicating: pre-fill fields, but clear SKU (must be unique) and reset qty to 0

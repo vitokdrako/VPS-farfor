@@ -101,6 +101,7 @@ async def get_audit_items(
                 p.depth_cm,
                 p.diameter_cm,
                 p.shape,
+                p.components,
                 p.hashtags,
                 p.status as product_status
             FROM products p
@@ -238,8 +239,9 @@ async def get_audit_items(
             depth_cm = row[23]
             diameter_cm = row[24]
             shape = row[25]
-            hashtags_json = row[26]
-            product_status_val = row[27]
+            components = row[26]
+            hashtags_json = row[27]
+            product_status_val = row[28]
             
             import json
             try:
@@ -288,6 +290,7 @@ async def get_audit_items(
                 'depthCm': float(depth_cm) if depth_cm else None,
                 'diameterCm': float(diameter_cm) if diameter_cm else None,
                 'shape': shape,
+                'components': components,
                 'hashtags': hashtags,
                 'imageUrl': photo_url,
                 'price': float(price) if price else 0,
@@ -1239,6 +1242,7 @@ async def create_item(
             "category_name": data.get('category') or None,
             "subcategory_name": data.get('subcategory') or None,
             "shape": data.get('shape') or None,
+            "components": data.get('components') or None,
             "height_cm": float(data['height']) if data.get('height') not in (None, '', 0) else None,
             "width_cm": float(data['width']) if data.get('width') not in (None, '', 0) else None,
             "depth_cm": float(data['depth']) if data.get('depth') not in (None, '', 0) else None,
@@ -1271,14 +1275,14 @@ async def create_item(
             INSERT INTO products (
                 product_id, sku, name, price, rental_price,
                 color, material, category_name, subcategory_name,
-                shape, height_cm, width_cm, depth_cm, diameter_cm,
+                shape, components, height_cm, width_cm, depth_cm, diameter_cm,
                 quantity, zone, aisle, shelf, size,
                 description, care_instructions, hashtags, image_url,
                 status, state, created_at, synced_at
             ) VALUES (
                 :product_id, :sku, :name, :price, :rental_price,
                 :color, :material, :category_name, :subcategory_name,
-                :shape, :height_cm, :width_cm, :depth_cm, :diameter_cm,
+                :shape, :components, :height_cm, :width_cm, :depth_cm, :diameter_cm,
                 :quantity, :zone, :aisle, :shelf, :size,
                 :description, :care_instructions, :hashtags, :image_url,
                 :status, 'available', NOW(), NOW()
@@ -1392,6 +1396,13 @@ async def edit_item_full(
             update_params['shape'] = data['shape']
             if data['shape']:
                 changes.append(f"Форма: {data['shape']}")
+
+        # === НОВІ ПОЛЯ: Комплектація ===
+        if 'components' in data:
+            update_fields.append("components = :components")
+            update_params['components'] = data['components'] or None
+            if data['components']:
+                changes.append(f"Комплектація: {data['components']}")
         
         # === НОВІ ПОЛЯ: Категорія/Підкатегорія ===
         if 'category' in data:
