@@ -9,7 +9,7 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import CorporateHeader from '../components/CorporateHeader'
 import { getImageUrl, FALLBACK_IMAGE, handleImageError } from '../utils/imageHelper'
-import { ChevronLeft, ChevronRight, Printer, Package, AlertTriangle, Phone, Clock, ArrowLeft, RefreshCw } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Printer, Package, AlertTriangle, Phone, Clock, ArrowLeft, RefreshCw, Plus, CheckSquare, X } from 'lucide-react'
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || ''
 
@@ -46,11 +46,18 @@ export default function PickingListPage() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [checked, setChecked] = useState({}) // localStorage-backed { card_id: { product_id: true } }
+  const [taskModal, setTaskModal] = useState(null) // { order_id, order_number, product_id, product_name, sku }
+  const [staff, setStaff] = useState([])
 
   // Load checks once
   useEffect(() => {
     try { setChecked(JSON.parse(localStorage.getItem('picking_checks') || '{}')) }
     catch { setChecked({}) }
+  }, [])
+  
+  // Load staff for task assignment
+  useEffect(() => {
+    authFetch(`${BACKEND_URL}/api/tasks/staff`).then(r => r.ok ? r.json() : []).then(setStaff)
   }, [])
 
   // Persist checks
@@ -162,6 +169,7 @@ export default function PickingListPage() {
                 {data.awaiting_orders.map(card => (
                   <CardView key={`o-${card.order_id}`} card={card} cardId={`o-${card.order_id}`} kind="awaiting"
                     onOpenCard={() => navigate(`/order/${card.order_id}/view`)}
+                    onCreateTask={setTaskModal}
                     checked={checked[`o-${card.order_id}`] || {}} onToggle={(pid) => toggleCheck(`o-${card.order_id}`, pid)} />
                 ))}
               </Section>
@@ -173,6 +181,7 @@ export default function PickingListPage() {
                   return <CardView key={card.id} card={card} cardId={card.id} kind="prep"
                     progress={{ done, total }}
                     onOpenCard={() => navigate(`/issue/${card.id}`)}
+                    onCreateTask={setTaskModal}
                     checked={checked[card.id] || {}} onToggle={(pid) => toggleCheck(card.id, pid)} />
                 })}
               </Section>
@@ -184,6 +193,7 @@ export default function PickingListPage() {
                   return <CardView key={card.id} card={card} cardId={card.id} kind="ready"
                     progress={{ done, total }}
                     onOpenCard={() => navigate(`/issue/${card.id}`)}
+                    onCreateTask={setTaskModal}
                     checked={checked[card.id] || {}} onToggle={(pid) => toggleCheck(card.id, pid)} />
                 })}
               </Section>
@@ -191,6 +201,16 @@ export default function PickingListPage() {
           </>
         )}
       </main>
+
+      {/* Task creation modal */}
+      {taskModal && (
+        <TaskCreateModal
+          context={taskModal}
+          staff={staff}
+          onClose={() => setTaskModal(null)}
+          onCreated={() => { setTaskModal(null); fetchData(dayOffset) }}
+        />
+      )}
     </div>
   )
 }
@@ -227,7 +247,7 @@ function Section({ title, subtitle, tone, children }) {
   )
 }
 
-function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard }) {
+function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard, onCreateTask }) {
   return (
     <article className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden break-inside-avoid print:shadow-none print:border print:rounded-none">
       {/* Card header */}
@@ -272,6 +292,24 @@ function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard 
           </div>
         )}
       </header>
+
+      {/* Tasks badge row */}
+      {card.tasks && card.tasks.length > 0 && (
+        <div className="px-4 py-2 bg-violet-50 border-b border-violet-100 flex flex-wrap items-center gap-2 text-xs">
+          <CheckSquare className="w-3.5 h-3.5 text-violet-600 flex-shrink-0" />
+          <span className="font-semibold text-violet-700 uppercase text-[10px]">Завдання:</span>
+          {card.tasks.map(t => (
+            <span key={t.id} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${
+              t.priority === 'high' ? 'bg-rose-100 text-rose-700' :
+              t.priority === 'medium' ? 'bg-amber-100 text-amber-700' :
+              'bg-slate-100 text-slate-700'
+            }`} title={`${t.task_type} · ${t.status}`}>
+              {t.title}
+              {t.assignee_name && <span className="text-slate-500 font-medium">→ {t.assignee_name}</span>}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Client comment (yellow) */}
       {card.order_notes?.trim() && (
@@ -347,6 +385,15 @@ function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard 
                     )}
                     {/* Qty */}
                     <span className="font-bold text-slate-800 text-sm w-12 text-right flex-shrink-0">× {it.qty}</span>
+                    {/* Quick task button */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onCreateTask({ order_id: card.order_id, order_number: card.order_number, product_id: it.product_id, product_name: it.name, sku: it.sku }) }}
+                      title="Створити завдання"
+                      className="opacity-30 group-hover:opacity-100 hover:bg-violet-50 text-violet-600 rounded p-1 transition flex-shrink-0 print:hidden"
+                      data-testid={`new-task-${cardId}-${it.product_id}`}
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                   {/* Components — additional items that go with this product */}
                   {it.components && (
@@ -363,3 +410,134 @@ function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard 
     </article>
   )
 }
+
+/* ========== Task Create Modal ========== */
+function TaskCreateModal({ context, staff, onClose, onCreated }) {
+  const [title, setTitle] = useState(context.product_name ? `${context.product_name}` : '')
+  const [description, setDescription] = useState('')
+  const [taskType, setTaskType] = useState('general')
+  const [priority, setPriority] = useState('medium')
+  const [assignedToId, setAssignedToId] = useState('')
+  const [dueDate, setDueDate] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const submit = async () => {
+    if (!title.trim()) { alert('Введіть назву завдання'); return }
+    setSaving(true)
+    try {
+      const payload = {
+        title: title.trim(),
+        description: description.trim() || null,
+        task_type: taskType,
+        priority,
+        assigned_to_id: assignedToId ? Number(assignedToId) : null,
+        order_id: context.order_id || null,
+        order_number: context.order_number || null,
+        due_date: dueDate || null,
+      }
+      const res = await authFetch(`${BACKEND_URL}/api/tasks`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Помилка створення' }))
+        alert(err.detail || 'Помилка')
+        return
+      }
+      onCreated()
+    } catch (e) {
+      alert('Помилка: ' + String(e))
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3" data-testid="task-create-modal">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col shadow-xl">
+        <header className="flex items-center justify-between px-5 py-3 border-b border-slate-200 bg-slate-50/50">
+          <div>
+            <div className="text-xs text-slate-500">Нове завдання</div>
+            <h3 className="text-base font-bold text-slate-800">
+              {context.order_number && <>До замовлення {context.order_number}</>}
+            </h3>
+            {context.product_name && (
+              <div className="text-xs text-slate-600 mt-0.5">
+                {context.sku && <span className="font-mono text-violet-600">{context.sku}</span>} · {context.product_name}
+              </div>
+            )}
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-500" data-testid="task-modal-close">
+            <X className="w-5 h-5" />
+          </button>
+        </header>
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Назва *</label>
+            <input value={title} onChange={e => setTitle(e.target.value)} autoFocus
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="напр.: Пофарбувати білу тумбу" data-testid="task-title" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Опис</label>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              placeholder="Деталі завдання..." data-testid="task-description" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Тип</label>
+              <select value={taskType} onChange={e => setTaskType(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-testid="task-type">
+                <option value="general">Звичайне</option>
+                <option value="painting">Фарбування</option>
+                <option value="cleaning">Прибирання</option>
+                <option value="repair">Ремонт</option>
+                <option value="restoration">Реставрація</option>
+                <option value="purchase">Купівля</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Пріоритет</label>
+              <select value={priority} onChange={e => setPriority(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-testid="task-priority">
+                <option value="low">Низький</option>
+                <option value="medium">Середній</option>
+                <option value="high">Високий</option>
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Виконавець</label>
+              <select value={assignedToId} onChange={e => setAssignedToId(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-testid="task-assignee">
+                <option value="">— Не призначено —</option>
+                {staff.map(s => (
+                  <option key={s.user_id || s.id} value={s.user_id || s.id}>
+                    {s.firstname ? `${s.firstname} ${s.lastname || ''}` : s.username || s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Дедлайн</label>
+              <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" data-testid="task-due-date" />
+            </div>
+          </div>
+        </div>
+        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-200 bg-slate-50/50">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-slate-600 hover:bg-slate-100">
+            Скасувати
+          </button>
+          <button onClick={submit} disabled={saving}
+            className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-sm font-semibold disabled:opacity-50"
+            data-testid="task-submit">
+            {saving ? 'Створюю...' : 'Створити завдання'}
+          </button>
+        </footer>
+      </div>
+    </div>
+  )
+}
+

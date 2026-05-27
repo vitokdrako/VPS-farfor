@@ -88,6 +88,34 @@ async def get_picking_list(
 
     target_str = target_date.isoformat()
 
+    # Preload OPEN tasks per order to show in cards
+    tasks_by_order = {}
+    try:
+        task_rows = db.execute(text("""
+            SELECT t.order_id, t.id, t.title, t.task_type, t.status, t.priority,
+                   t.assigned_to_id, t.assigned_to, t.created_at,
+                   COALESCE(CONCAT(u.firstname, ' ', u.lastname), u.username, t.assigned_to) as assignee_name
+            FROM tasks t
+            LEFT JOIN users u ON u.user_id = t.assigned_to_id
+            WHERE t.status IN ('todo', 'in_progress')
+            ORDER BY
+              CASE t.priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+              t.created_at DESC
+        """)).fetchall()
+        for tr in task_rows:
+            if tr[0] is None:
+                continue
+            tasks_by_order.setdefault(int(tr[0]), []).append({
+                "id": tr[1],
+                "title": tr[2] or "",
+                "task_type": tr[3] or "general",
+                "status": tr[4] or "todo",
+                "priority": tr[5] or "medium",
+                "assignee_name": (tr[9] or "").strip(),
+            })
+    except Exception:
+        tasks_by_order = {}
+
     result = {
         "date": target_str,
         "preparation_cards": [],
@@ -152,6 +180,7 @@ async def get_picking_list(
             "items_count": len(items_enriched),
             "items_total_qty": sum(int(it.get("qty") or 0) for it in items_enriched),
             "zones": [{"zone": z, "items": its} for z, its in sorted(zones.items())],
+            "tasks": tasks_by_order.get(int(row[1]), []),
         }
         if row[3] == "preparation":
             result["preparation_cards"].append(card)
@@ -206,6 +235,7 @@ async def get_picking_list(
                 "items_count": len(items_rows),
                 "items_total_qty": total_qty,
                 "zones": [{"zone": z, "items": its} for z, its in sorted(zones.items())],
+                "tasks": tasks_by_order.get(int(oid), []),
             })
 
     # Summary
