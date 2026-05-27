@@ -118,6 +118,18 @@ async def get_picking_list(
             items = json.loads(items_raw) if isinstance(items_raw, str) else (items_raw or [])
         except Exception:
             items = []
+
+        # FALLBACK: if issue_cards.items is empty (card not yet picked) — pull from order_items
+        if not items:
+            oi_rows = db.execute(text("""
+                SELECT product_id, product_name, quantity FROM order_items
+                WHERE order_id = :oid
+            """), {"oid": row[1]}).fetchall()
+            items = [
+                {"id": ir[0], "product_id": ir[0], "name": ir[1] or "", "qty": int(ir[2] or 0)}
+                for ir in oi_rows
+            ]
+
         items_enriched = _enrich_items_with_zone(items, db)
         # Group by zone
         zones = {}
