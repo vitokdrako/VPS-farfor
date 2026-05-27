@@ -319,8 +319,22 @@ function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard 
                     <img src={getImageUrl(it.image_url, 'thumb') || FALLBACK_IMAGE} alt={it.name}
                       onError={handleImageError}
                       className="w-10 h-10 object-contain rounded bg-white border border-slate-100 flex-shrink-0 print:w-6 print:h-6" />
-                    {/* SKU */}
-                    <span className="text-xs text-slate-500 font-mono w-20 flex-shrink-0">{it.sku}</span>
+                    {/* SKU — click to open in Reaudit Cabinet (new tab) */}
+                    {it.sku ? (
+                      <a
+                        href={`/reaudit?sku=${encodeURIComponent(it.sku)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title="Відкрити картку товару в Кабінеті переобліку (нова вкладка)"
+                        className="text-xs text-corp-primary hover:text-corp-primary/80 hover:underline font-mono w-20 flex-shrink-0 print:no-underline print:text-slate-500"
+                        data-testid={`sku-link-${it.sku}`}
+                      >
+                        {it.sku}
+                      </a>
+                    ) : (
+                      <span className="text-xs text-slate-400 font-mono w-20 flex-shrink-0">—</span>
+                    )}
                     {/* Name */}
                     <span className={`flex-1 min-w-0 truncate ${checked[it.product_id] ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
                       {it.name}

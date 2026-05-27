@@ -820,6 +820,21 @@ export default function ReauditCabinetFull({ onBackToDashboard, onNavigateToTask
     finally { setLoading(false) }
   }, [filters])
 
+  // Auto-open product modal if URL has ?sku=XXX (from picking-list or other sources)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const skuFromUrl = params.get('sku')
+    if (skuFromUrl && items.length > 0 && !selectedItem) {
+      const target = items.find((it: any) => it.code === skuFromUrl)
+      if (target) {
+        setSelectedItem(target)
+        // Clean URL so refresh doesn't keep opening it
+        const newUrl = window.location.pathname
+        window.history.replaceState({}, '', newUrl)
+      }
+    }
+  }, [items])
+
   const loadStats = async () => {
     try {
       const res = await fetch(`${BACKEND_URL}/api/audit/stats`)
