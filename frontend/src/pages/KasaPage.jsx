@@ -5,7 +5,7 @@ import CorporateHeader from '../components/CorporateHeader';
 import {
   ArrowLeft, Banknote, CreditCard, Wallet, TrendingUp, TrendingDown,
   Search, RefreshCw, Shield, RotateCcw, Plus, X, MessageSquare,
-  ChevronDown, Landmark, CalendarCheck, Check
+  ChevronDown, Landmark, CalendarCheck, Check, BarChart3, Calendar
 } from 'lucide-react';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -28,6 +28,9 @@ export default function KasaPage({ embedded = false }) {
   const [period, setPeriod] = useState(searchParams.get('period') || 'month');
   const [searchQuery, setSearchQuery] = useState('');
   const [modal, setModal] = useState(null); // 'income' | 'deposit' | 'expense' | 'collection' | 'closeMonth' | null
+  const [view, setView] = useState(searchParams.get('view') || 'cash'); // 'cash' | 'forecast'
+  const [forecastOrders, setForecastOrders] = useState([]);
+  const [forecastLoading, setForecastLoading] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -38,7 +41,26 @@ export default function KasaPage({ embedded = false }) {
     finally { setLoading(false); }
   };
 
+  const fetchForecast = async () => {
+    setForecastLoading(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/api/manager/finance/orders-with-finance?limit=500`);
+      if (res.ok) {
+        const d = await res.json();
+        setForecastOrders(d.orders || []);
+      }
+    } catch (e) { console.error(e); }
+    finally { setForecastLoading(false); }
+  };
+
   useEffect(() => { fetchData(); }, [period]);
+  useEffect(() => { if (view === 'forecast' && forecastOrders.length === 0) fetchForecast(); }, [view]);
+
+  const changeView = (v) => {
+    setView(v);
+    const sp = Object.fromEntries(searchParams);
+    setSearchParams({ ...sp, view: v });
+  };
 
   const changePeriod = (p) => {
     setPeriod(p);
@@ -86,10 +108,25 @@ export default function KasaPage({ embedded = false }) {
               )}
               <div>
                 <h1 className="text-lg font-bold text-slate-800">Каса</h1>
-                <p className="text-xs text-slate-500">{periodLabels[period]}</p>
+                <p className="text-xs text-slate-500">{view === 'forecast' ? 'План надходжень' : periodLabels[period]}</p>
               </div>
             </div>
 
+            {/* View toggle: Каса / План надходжень */}
+            <div className="flex bg-slate-100 p-1 rounded-xl" data-testid="view-tabs">
+              <button onClick={() => changeView('cash')}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${view === 'cash' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                data-testid="view-cash">
+                <Wallet className="w-3.5 h-3.5" /> Каса
+              </button>
+              <button onClick={() => changeView('forecast')}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${view === 'forecast' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                data-testid="view-forecast">
+                <BarChart3 className="w-3.5 h-3.5" /> План надходжень
+              </button>
+            </div>
+
+            {view === 'cash' && (
             <div className="flex bg-slate-100 p-1 rounded-xl" data-testid="period-tabs">
               {Object.entries(periodLabels).map(([key, label]) => (
                 <button key={key} onClick={() => changePeriod(key)}
@@ -97,6 +134,7 @@ export default function KasaPage({ embedded = false }) {
                   data-testid={`period-${key}`}>{label}</button>
               ))}
             </div>
+            )}
 
             <div className="flex items-center gap-3">
               <div className="relative">
@@ -112,7 +150,7 @@ export default function KasaPage({ embedded = false }) {
             </div>
           </div>
 
-          {data && (
+          {view === 'cash' && data && (
             <div className="flex items-center gap-6 mt-3 pt-3 border-t border-slate-100 text-sm" data-testid="summary-bar">
               <SummaryPill icon={TrendingUp} label="Дохід" value={money(income.total)} color="emerald" />
               <SummaryPill icon={Banknote} label="Готівка" value={money(income.cash_total)} color="green" sub />
@@ -152,9 +190,11 @@ export default function KasaPage({ embedded = false }) {
         </div>
       </div>
 
-      {/* 3-Column Layout */}
+      {/* Content area */}
       <main className="max-w-[1800px] mx-auto px-4 py-6" data-testid="kasa-columns">
-        {loading ? (
+        {view === 'forecast' ? (
+          <ForecastView orders={forecastOrders} loading={forecastLoading} />
+        ) : loading ? (
           <div className="grid grid-cols-3 gap-6">
             {[1,2,3].map(i => <div key={i} className="bg-white rounded-2xl border border-slate-200 p-6 h-96 animate-pulse" />)}
           </div>
@@ -804,6 +844,114 @@ function FieldTextarea({ label, value, onChange, testId, placeholder }) {
       <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={2}
         className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
         data-testid={testId} />
+    </div>
+  );
+}
+
+
+/* ========== Forecast View (План надходжень) ========== */
+function ForecastView({ orders, loading }) {
+  // Compute expected income from active (non-completed, non-cancelled) orders
+  const upcoming = (orders || [])
+    .filter(o => o.status !== 'completed' && o.status !== 'cancelled' && o.status !== 'returned')
+    .map(o => {
+      const totalRental = Number(o.total_rental || o.total_price || 0);
+      const rentPaid = Number(o.rent_paid || 0);
+      const totalDeposit = Number(o.total_deposit || o.deposit_amount || 0);
+      const depositHeld = Number(o.deposit_held || 0);
+      return {
+        ...o,
+        rentDue: Math.max(0, totalRental - rentPaid),
+        depositExpected: Math.max(0, totalDeposit - depositHeld),
+      };
+    })
+    .filter(o => o.rentDue > 0 || o.depositExpected > 0)
+    .sort((a, b) => new Date(a.rental_start_date || 0) - new Date(b.rental_start_date || 0));
+
+  const totalRentExpected = upcoming.reduce((s, o) => s + o.rentDue, 0);
+  const totalDepositExpected = upcoming.reduce((s, o) => s + o.depositExpected, 0);
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-3 gap-4">
+          {[1,2,3].map(i => <div key={i} className="bg-white rounded-xl border border-slate-200 p-6 h-24 animate-pulse" />)}
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-6 h-96 animate-pulse" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4" data-testid="forecast-view">
+      {/* KPIs */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <SummaryCard label="Очікується оренди" value={money(totalRentExpected)} color="emerald" icon={TrendingUp} />
+        <SummaryCard label="Очікується застав" value={money(totalDepositExpected)} color="blue" icon={Shield} />
+        <SummaryCard label="Всього очікується" value={money(totalRentExpected + totalDepositExpected)} color="slate" icon={Wallet} bold />
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden" data-testid="forecast-table">
+        <header className="px-5 py-3 border-b border-slate-100 bg-slate-50/50">
+          <h3 className="font-bold text-slate-800 flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-slate-500" /> Очікувані надходження
+            <span className="text-xs font-normal text-slate-500 ml-auto">{upcoming.length} замовлень</span>
+          </h3>
+        </header>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50/40 text-xs uppercase text-slate-500">
+              <tr>
+                <th className="text-left py-2 px-3 font-semibold">Ордер</th>
+                <th className="text-left py-2 px-3 font-semibold">Клієнт</th>
+                <th className="text-left py-2 px-3 font-semibold">Дата</th>
+                <th className="text-left py-2 px-3 font-semibold">Статус</th>
+                <th className="text-right py-2 px-3 font-semibold">Борг оренди</th>
+                <th className="text-right py-2 px-3 font-semibold">Очік. застава</th>
+                <th className="text-right py-2 px-3 font-semibold">Всього</th>
+              </tr>
+            </thead>
+            <tbody>
+              {upcoming.map(o => (
+                <tr key={o.order_id} className="border-t border-slate-100 hover:bg-slate-50/60">
+                  <td className="py-2 px-3 font-bold text-slate-800">#{o.order_number || o.order_id}</td>
+                  <td className="py-2 px-3 text-slate-700">{o.customer_name || '—'}</td>
+                  <td className="py-2 px-3 text-slate-600">{fmtDate(o.rental_start_date)}</td>
+                  <td className="py-2 px-3"><span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{o.status}</span></td>
+                  <td className="py-2 px-3 text-right font-medium text-emerald-700">{o.rentDue > 0 ? money(o.rentDue) : <span className="text-slate-300">—</span>}</td>
+                  <td className="py-2 px-3 text-right font-medium text-blue-700">{o.depositExpected > 0 ? money(o.depositExpected) : <span className="text-slate-300">—</span>}</td>
+                  <td className="py-2 px-3 text-right font-bold text-slate-800">{money(o.rentDue + o.depositExpected)}</td>
+                </tr>
+              ))}
+              {upcoming.length === 0 && (
+                <tr><td colSpan={7} className="py-12 text-center text-slate-400">Немає очікуваних надходжень</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({ label, value, color, icon: Icon, bold }) {
+  const colorClasses = {
+    emerald: 'text-emerald-600 bg-emerald-50',
+    blue: 'text-blue-600 bg-blue-50',
+    slate: 'text-slate-700 bg-slate-100',
+  }[color] || 'text-slate-700 bg-slate-100';
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-3">
+      {Icon && (
+        <div className={`w-10 h-10 rounded-lg ${colorClasses} flex items-center justify-center`}>
+          <Icon className="w-5 h-5" />
+        </div>
+      )}
+      <div>
+        <div className="text-xs text-slate-500">{label}</div>
+        <div className={`text-xl ${bold ? 'font-bold' : 'font-semibold'} text-slate-800`}>{value}</div>
+      </div>
     </div>
   );
 }
