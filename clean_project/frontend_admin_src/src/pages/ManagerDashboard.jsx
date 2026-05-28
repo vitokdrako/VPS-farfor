@@ -2,7 +2,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CorporateHeader from '../components/CorporateHeader';
-import OrdersChatModal from '../components/OrdersChatModal';  // ✅ Чат замовлень
 import { limitedAuthFetch } from '../utils/requestLimiter';  // ✅ Request limiter
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
@@ -20,7 +19,7 @@ export default function ManagerDashboard() {
   const [loading, setLoading] = useState(true);
   const [financeData, setFinanceData] = useState({ revenue: 0, deposits: 0 });
   const [cleaningStats, setCleaningStats] = useState({ repair: 0 });
-  const [showChatModal, setShowChatModal] = useState(false);  // ✅ Стан для модалки чату
+  const navigate = useNavigate();
   
   // Стани для розгортання карток
   const [showAllAwaiting, setShowAllAwaiting] = useState(false);
@@ -35,8 +34,9 @@ export default function ManagerDashboard() {
   // ✅ Режим об'єднання замовлень
   const [mergeMode, setMergeMode] = useState(false);
   const [selectedForMerge, setSelectedForMerge] = useState([]);
-  
-  const navigate = useNavigate();
+
+  // ✅ Перемикач "Всі / День": null = всі, інакше зсув в днях від сьогодні (0=сьогодні, 1=завтра, ...)
+  const [dayOffset, setDayOffset] = useState(null);
 
   // Завантажити дані користувача
   useEffect(() => {
@@ -341,6 +341,27 @@ export default function ManagerDashboard() {
   const newOrders = orders; // Для сумісності з KPI
   
   // 2. В обробці (processing) - на комплектації
+  // Фільтрація карток по пошуку
+  const filterBySearch = (cards) => {
+    let result = cards;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = cards.filter(card => {
+        const name = (card.customer_name || '').toLowerCase();
+        const phone = (card.customer_phone || '').toLowerCase();
+        const orderNum = String(card.order_id || card.id || '').toLowerCase();
+        const orderNumber = (card.order_number || '').toLowerCase();
+        return name.includes(q) || phone.includes(q) || orderNum.includes(q) || orderNumber.includes(q);
+      });
+    }
+    // Сортування від нових до старих
+    return [...result].sort((a, b) => {
+      const dateA = new Date(a.updated_at || a.created_at || 0);
+      const dateB = new Date(b.updated_at || b.created_at || 0);
+      return dateB - dateA;
+    });
+  };
+
   const processingOrders = decorOrders.filter(o => o.status === 'processing');
   
   // 3. Готові до видачі - ВСІ замовлення що готові до видачі (різні варіанти статусів)
@@ -351,15 +372,37 @@ export default function ManagerDashboard() {
   );
   
   // Issue Cards (картки видачі) по статусам - ВСІ без фільтрації по даті:
-  const preparationCards = issueCards.filter(c => c.status === 'preparation');
-  const readyCards = issueCards.filter(c => 
+  const preparationCardsAll = issueCards.filter(c => c.status === 'preparation');
+  const readyCardsAll = issueCards.filter(c => 
     c.status === 'ready' || 
     c.status === 'ready_for_issue'
   );
   const issuedCards = issueCards.filter(c => c.status === 'issued');
   
   // 4. На поверненні - ВСІ issue cards що видані (статус 'issued')
-  const returnOrders = issueCards.filter(c => c.status === 'issued');
+  const returnOrdersAll = issueCards.filter(c => c.status === 'issued');
+
+  // ✅ Дата для фільтру (зсув від сьогодні)
+  const filterDate = (() => {
+    if (dayOffset === null) return null;
+    const d = new Date();
+    d.setDate(d.getDate() + dayOffset);
+    return d.toISOString().slice(0, 10);  // YYYY-MM-DD
+  })();
+  const isMatchIssue = (c) => {
+    if (!filterDate) return true;
+    const d = c.rental_start_date || c.issue_date;
+    return d && String(d).slice(0, 10) === filterDate;
+  };
+  const isMatchReturn = (c) => {
+    if (!filterDate) return true;
+    const d = c.rental_end_date || c.return_date;
+    return d && String(d).slice(0, 10) === filterDate;
+  };
+
+  const preparationCards = preparationCardsAll.filter(isMatchIssue);
+  const readyCards       = readyCardsAll.filter(isMatchIssue);
+  const returnOrders     = returnOrdersAll.filter(isMatchReturn);
   
   // 5. Часткові повернення - ТЕПЕР беремо з окремої таблиці версій
   // Старі картки з partial_return статусом ігноруємо - вони тепер в архіві
@@ -374,22 +417,16 @@ export default function ManagerDashboard() {
 
   return (
     <div className="min-h-screen bg-corp-bg-page font-montserrat">
-      <CorporateHeader cabinetName="Кабінет менеджера" />
+      <CorporateHeader cabinetName="Реквізиторська" />
       
       {/* Quick Actions Bar */}
       <div className="bg-white border-b border-corp-border">
-        <div className="mx-auto max-w-7xl px-6 py-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <button 
-              className="corp-btn corp-btn-primary"
-              onClick={() => navigate('/order/new')}
-            >
-              + Нове замовлення
-            </button>
+        <div className="mx-auto max-w-7xl px-2 sm:px-6 py-2 sm:py-3">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             
             {/* ✅ Кнопка режиму об'єднання */}
             <button 
-              className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors flex items-center gap-2 ${
+              className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg border text-xs sm:text-sm font-medium transition-colors flex items-center gap-1 sm:gap-2 ${
                 mergeMode 
                   ? 'border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100' 
                   : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
@@ -399,27 +436,73 @@ export default function ManagerDashboard() {
                 setSelectedForMerge([]);
               }}
             >
-              🔗 {mergeMode ? 'Скасувати' : 'Об\'єднати'}
+              🔗 <span className="hidden xs:inline">{mergeMode ? 'Скасувати' : 'Об\'єднати'}</span>
             </button>
-            
-            {/* ✅ Кнопка чату */}
-            <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors flex items-center gap-1.5"
-              onClick={() => setShowChatModal(true)}
-            >
-              💬 Чат
-            </button>
+
+            {/* ✅ Перемикач "Всі / День" з гортанням по днях */}
+            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5 sm:p-1" data-testid="day-filter">
+              <button
+                onClick={() => setDayOffset(null)}
+                className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
+                  dayOffset === null ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+                data-testid="filter-all-btn"
+              >
+                Всі
+              </button>
+              <div className={`flex items-center gap-0.5 rounded-md transition-colors ${
+                dayOffset !== null ? 'bg-corp-primary text-white shadow-sm' : ''
+              }`}>
+                <button
+                  onClick={() => setDayOffset(o => (o === null ? 0 : o - 1))}
+                  title="Назад на день"
+                  className={`px-1.5 sm:px-2 py-1 sm:py-1.5 rounded-l-md text-xs sm:text-sm font-bold transition-colors ${
+                    dayOffset !== null ? 'hover:bg-white/15' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200'
+                  }`}
+                  data-testid="filter-prev-day"
+                >
+                  ‹
+                </button>
+                <button
+                  onClick={() => setDayOffset(0)}
+                  className={`px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${
+                    dayOffset === null ? 'text-slate-500 hover:text-slate-700 hover:bg-slate-200 rounded-md' : ''
+                  }`}
+                  data-testid="filter-day-label"
+                >
+                  {(() => {
+                    if (dayOffset === null) return '📅 Сьогодні';
+                    if (dayOffset === 0) return 'Сьогодні';
+                    if (dayOffset === 1) return 'Завтра';
+                    if (dayOffset === -1) return 'Вчора';
+                    const d = new Date();
+                    d.setDate(d.getDate() + dayOffset);
+                    return d.toLocaleDateString('uk-UA', { day: '2-digit', month: 'short', weekday: 'short' });
+                  })()}
+                </button>
+                <button
+                  onClick={() => setDayOffset(o => (o === null ? 0 : o + 1))}
+                  title="Вперед на день"
+                  className={`px-1.5 sm:px-2 py-1 sm:py-1.5 rounded-r-md text-xs sm:text-sm font-bold transition-colors ${
+                    dayOffset !== null ? 'hover:bg-white/15' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200'
+                  }`}
+                  data-testid="filter-next-day"
+                >
+                  ›
+                </button>
+              </div>
+            </div>
             
             {/* Панель об'єднання */}
             {mergeMode && selectedForMerge.length > 0 && (
-              <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 border border-amber-200 rounded-lg">
-                <span className="text-sm text-amber-700">
+              <div className="flex items-center gap-2 px-2 sm:px-3 py-1 bg-amber-50 border border-amber-200 rounded-lg">
+                <span className="text-xs sm:text-sm text-amber-700">
                   Вибрано: <b>{selectedForMerge.length}</b>
                 </span>
                 <button
                   onClick={handleMergeOrders}
                   disabled={selectedForMerge.length < 2}
-                  className="px-3 py-1 rounded bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-2 sm:px-3 py-1 rounded bg-amber-500 text-white text-xs sm:text-sm font-medium hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Об'єднати →
                 </button>
@@ -427,70 +510,53 @@ export default function ManagerDashboard() {
             )}
             
             <div className="h-6 w-px bg-slate-200 mx-1 hidden md:block" />
-            
-            {/* Кнопка оновлення */}
             <button 
-              onClick={handleReload}
-              disabled={loading}
-              className="px-3 py-2 rounded-lg border border-corp-border text-corp-text-muted hover:bg-corp-bg-light hover:text-corp-text-dark transition-colors flex items-center gap-2"
-              title="Оновити всі дані"
-            >
-              <span className={loading ? 'animate-spin' : ''}>🔄</span>
-              <span className="hidden sm:inline">Оновити</span>
-            </button>
-            
-            <div className="h-6 w-px bg-slate-200 mx-1 hidden md:block" />
-            <button 
-              className="rounded-lg border border-corp-primary bg-corp-primary/5 px-3 py-2 text-sm font-medium text-corp-primary hover:bg-corp-primary hover:text-white transition-colors"
+              className="rounded-lg border border-corp-primary bg-corp-primary/5 px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-corp-primary hover:bg-corp-primary hover:text-white transition-colors"
               onClick={() => navigate('/manager-cabinet')}
             >
-              👔 Менеджерська
+              Менеджерська
             </button>
             <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+              className="rounded-lg border border-corp-gold bg-corp-gold/5 px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-corp-gold hover:bg-corp-gold hover:text-white transition-colors flex items-center gap-1.5"
+              onClick={() => navigate('/cabinet')}
+              data-testid="nav-cabinet-btn"
+            >
+              Кабiнет
+            </button>
+            <button 
+              className="rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
               onClick={() => navigate('/calendar')}
             >
               Календар
             </button>
             <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
-              onClick={() => navigate('/finance')}
+              className="rounded-lg border border-sky-300 bg-sky-50 px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-sky-700 hover:bg-sky-100 transition-colors"
+              onClick={() => navigate('/manager/picking-list')}
+              data-testid="picking-list-nav-btn"
             >
-              Фінанси
+              📋 Збір
             </button>
             <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+              className="rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
               onClick={() => navigate('/catalog')}
             >
               Каталог
             </button>
             <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+              className="rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
               onClick={() => navigate('/damages')}
             >
               Шкоди
             </button>
             <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
-              onClick={() => navigate('/tasks')}
-            >
-              Завдання
-            </button>
-            <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+              className="rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
               onClick={() => navigate('/reaudit')}
             >
               Переоблік
             </button>
-            <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
-              onClick={() => navigate('/orders-archive')}
-            >
-              Архів
-            </button>
             {user?.role === 'admin' && (
               <button 
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+                className="rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
                 onClick={() => navigate('/admin')}
               >
                 Адмін
@@ -500,68 +566,48 @@ export default function ManagerDashboard() {
         </div>
       </div>
 
-      {/* Filters */}
-      <section className="mx-auto max-w-7xl px-6 py-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Filter label="Менеджер">
-            <select className="corp-select">
-              <option>Всі</option>
-            </select>
-          </Filter>
-          <Filter label="Статус замовлення">
-            <select 
-              className="corp-select"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <option>Всі</option>
-              <option>Нове</option>
-              <option>Видача</option>
-              <option>В оренді</option>
-            </select>
-          </Filter>
-          <Filter label="Фінанси">
-            <select className="corp-select">
-              <option>Всі</option>
-              <option>Очікує оплати</option>
-              <option>Закрито</option>
-            </select>
-          </Filter>
-          <Filter label="Пошук">
+      {/* Пошук + Лічильник замовлень */}
+      <section className="mx-auto max-w-7xl px-2 sm:px-6 py-3 sm:py-4">
+        <div className="flex flex-col sm:flex-row sm:items-stretch gap-3 sm:gap-4">
+          {/* Пошук */}
+          <div className="flex-1">
+            <label className="block text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide mb-1 sm:mb-1.5">Пошук</label>
             <input 
-              placeholder="Імʼя / телефон / №" 
-              className="corp-input"
+              placeholder="Номер ордеру / Ім'я / Телефон" 
+              className="w-full h-10 sm:h-12 px-3 sm:px-4 rounded-xl border border-slate-200 bg-white text-sm focus:ring-2 focus:ring-corp-primary focus:border-transparent"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
-          </Filter>
+          </div>
+          
+          {/* Лічильник замовлень */}
+          <div className="flex-1">
+            <label className="block text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide mb-1 sm:mb-1.5">Замовлення</label>
+            <div className="h-10 sm:h-12 px-3 sm:px-4 rounded-xl border border-slate-200 bg-white flex items-center justify-between gap-2">
+              <span className="text-xl sm:text-2xl font-bold text-slate-800">{kpis.today}</span>
+              <span className="text-[10px] sm:text-xs text-slate-500 text-right">
+                {filterBySearch(newOrders).length} нові / {filterBySearch(preparationCards).length} компл. / {filterBySearch(readyCards).length} видач / {filterBySearch(returnOrders).length} поверн.
+              </span>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* KPIs */}
-      <section className="mx-auto max-w-7xl px-6">
-        <div className="grid grid-cols-3 md:grid-cols-3 gap-3">
-          <Kpi title="Замовлення" value={kpis.today.toString()} note={`${newOrders.length} нові / ${preparationCards.length} комплектації / ${readyCards.length} видач / ${returnOrders.length} повернення`}/>
-          <Kpi title="Виручка" value={`₴ ${kpis.revenue.toFixed(0)}`} note="з фін. кабінету"/>
-          <Kpi title="Застави в холді" value={kpis.deposits} note="кількість активних"/>
-        </div>
-      </section>
-
-      {/* Boards - 4 колонки: Комплектація, Готово, Повернення, Часткове */}
-      <main className="mx-auto max-w-7xl px-6 py-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* Boards - 4 колонки */}
+      <main className="mx-auto max-w-7xl px-2 sm:px-6 py-3 sm:py-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
         {/* КОЛОНКА 1: На комплектації / Видача сьогодні */}
         <Column title="📦 На комплектації" subtitle="Збір товарів + видача сьогодні" tone="ok">
           {loading ? (
             <div className="rounded-2xl border border-slate-200 p-4 h-32 bg-slate-50 animate-pulse" />
-          ) : preparationCards.length > 0 ? (
+          ) : filterBySearch(preparationCards).length > 0 ? (
             <>
-              {(showAllPreparation ? preparationCards : preparationCards.slice(0, 4)).map(card => (
+              {(showAllPreparation ? filterBySearch(preparationCards) : filterBySearch(preparationCards).slice(0, 4)).map(card => (
                 <OrderCard 
                   key={card.id}
                   id={`#${card.order_id}`}
                   name={card.customer_name || '—'}
                   phone={card.customer_phone || '—'}
-                  rent={`₴ ${(card.total_after_discount || card.total_rental || 0).toFixed(0)}`}
+                  rent={`₴ ${((card.total_after_discount || card.total_rental || 0) + (card.service_fee || 0)).toFixed(0)}`}
                   deposit={`₴ ${(card.deposit_amount || 0).toFixed(0)}`}
                   badge="preparation"
                   order={card}
@@ -570,15 +616,15 @@ export default function ManagerDashboard() {
                   onClick={() => navigate(`/issue/${card.id}`)}
                 />
               ))}
-              {preparationCards.length > 4 && !showAllPreparation && (
+              {filterBySearch(preparationCards).length > 4 && !showAllPreparation && (
                 <button 
                   onClick={() => setShowAllPreparation(true)}
                   className="text-center py-3 text-sm text-blue-600 hover:text-blue-800 font-medium hover:bg-blue-50 rounded-lg transition-colors cursor-pointer w-full"
                 >
-                  +{preparationCards.length - 4} більше карток - Показати всі
+                  +{filterBySearch(preparationCards).length - 4} більше карток - Показати всі
                 </button>
               )}
-              {preparationCards.length > 4 && showAllPreparation && (
+              {filterBySearch(preparationCards).length > 4 && showAllPreparation && (
                 <button 
                   onClick={() => setShowAllPreparation(false)}
                   className="text-center py-3 text-sm text-corp-text-main hover:text-corp-text-dark font-medium hover:bg-slate-50 rounded-lg transition-colors cursor-pointer w-full"
@@ -589,7 +635,7 @@ export default function ManagerDashboard() {
             </>
           ) : (
             <div className="rounded-2xl border border-slate-200 p-8 text-center text-slate-400">
-              Немає карток на комплектації
+              {searchQuery ? 'Нічого не знайдено' : 'Немає карток на комплектації'}
             </div>
           )}
         </Column>
@@ -598,15 +644,15 @@ export default function ManagerDashboard() {
         <Column title="✅ Готові до видачі" subtitle="Скомплектовано → готово до передачі клієнту" tone="ok">
           {loading ? (
             <div className="rounded-2xl border border-slate-200 p-4 h-32 bg-slate-50 animate-pulse" />
-          ) : readyCards.length > 0 ? (
+          ) : filterBySearch(readyCards).length > 0 ? (
             <>
-              {(showAllReady ? readyCards : readyCards.slice(0, 4)).map(card => (
+              {(showAllReady ? filterBySearch(readyCards) : filterBySearch(readyCards).slice(0, 4)).map(card => (
                 <OrderCard 
                   key={card.id}
                   id={`#${card.order_id}`}
                   name={card.customer_name || '—'}
                   phone={card.customer_phone || '—'}
-                  rent={`₴ ${(card.total_after_discount || card.total_rental || 0).toFixed(0)}`}
+                  rent={`₴ ${((card.total_after_discount || card.total_rental || 0) + (card.service_fee || 0)).toFixed(0)}`}
                   deposit={`₴ ${(card.deposit_amount || 0).toFixed(0)}`}
                   badge="ready"
                   order={card}
@@ -615,15 +661,15 @@ export default function ManagerDashboard() {
                   onClick={() => navigate(`/issue/${card.id}`)}
                 />
               ))}
-              {readyCards.length > 4 && !showAllReady && (
+              {filterBySearch(readyCards).length > 4 && !showAllReady && (
                 <button 
                   onClick={() => setShowAllReady(true)}
                   className="text-center py-3 text-sm text-blue-600 hover:text-blue-800 font-medium hover:bg-blue-50 rounded-lg transition-colors cursor-pointer w-full"
                 >
-                  +{readyCards.length - 4} більше карток - Показати всі
+                  +{filterBySearch(readyCards).length - 4} більше карток - Показати всі
                 </button>
               )}
-              {readyCards.length > 4 && showAllReady && (
+              {filterBySearch(readyCards).length > 4 && showAllReady && (
                 <button 
                   onClick={() => setShowAllReady(false)}
                   className="text-center py-3 text-sm text-corp-text-main hover:text-corp-text-dark font-medium hover:bg-slate-50 rounded-lg transition-colors cursor-pointer w-full"
@@ -634,7 +680,7 @@ export default function ManagerDashboard() {
             </>
           ) : (
             <div className="rounded-2xl border border-slate-200 p-8 text-center text-slate-400">
-              Немає готових карток
+              {searchQuery ? 'Нічого не знайдено' : 'Немає готових карток'}
             </div>
           )}
         </Column>
@@ -643,30 +689,69 @@ export default function ManagerDashboard() {
         <Column title="🔙 Повернення" subtitle="Видані замовлення, які очікують повернення" tone="warn">
           {loading ? (
             <div className="rounded-2xl border border-slate-200 p-4 h-32 bg-slate-50 animate-pulse" />
-          ) : returnOrders.length > 0 ? (
+          ) : filterBySearch(returnOrders).length > 0 ? (
             <>
-              {(showAllReturns ? returnOrders : returnOrders.slice(0, 4)).map(card => (
-                <OrderCard 
-                  key={card.id}
-                  id={card.order_number}
-                  name={card.customer_name}
-                  phone={card.customer_phone}
-                  rent={`₴ ${(card.total_after_discount || card.total_rental || 0).toFixed(0)}`}
-                  deposit={`₴ ${(card.deposit_amount || 0).toFixed(0)}`}
-                  badge="return"
-                  order={card}
-                  onClick={() => navigate(`/return/${card.order_id}`)}
-                />
-              ))}
-              {returnOrders.length > 4 && !showAllReturns && (
+              {(showAllReturns ? filterBySearch(returnOrders) : filterBySearch(returnOrders).slice(0, 4)).map(card => {
+                const endDate = card.rental_end_date || card.return_date;
+                let overdueDays = 0;
+                if (endDate) {
+                  const end = new Date(endDate);
+                  end.setHours(23, 59, 59);
+                  const now = new Date();
+                  if (now > end) overdueDays = Math.floor((now - end) / (1000 * 60 * 60 * 24));
+                }
+                return (
+                  <div 
+                    key={card.id}
+                    className={`relative rounded-2xl border p-3 transition hover:shadow-lg cursor-pointer ${
+                      overdueDays > 0 
+                        ? 'border-red-300 bg-red-50/50 ring-2 ring-red-100 hover:border-red-400' 
+                        : 'border-slate-200 bg-white hover:border-teal-400'
+                    }`}
+                    onClick={() => navigate(`/return/${card.order_id}`)}
+                    data-testid={`return-card-${card.order_id}`}
+                  >
+                    {overdueDays > 0 && (
+                      <div className="absolute -top-2 -right-2 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow-sm" data-testid={`overdue-badge-${card.order_id}`}>
+                        +{overdueDays} дн
+                      </div>
+                    )}
+                    <div className="flex justify-between items-start mb-1">
+                      <div>
+                        <div className="font-bold text-slate-800 text-sm">{card.order_number}</div>
+                        <div className="text-xs text-slate-500">{card.customer_name}</div>
+                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                        overdueDays > 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                      }`}>
+                        {overdueDays > 0 ? `Прострочено` : 'Вчасно'}
+                      </span>
+                    </div>
+                    <div className={`text-xs ${overdueDays > 0 ? 'text-red-600 font-medium' : 'text-slate-500'}`}>
+                      Повернення: {endDate ? new Date(endDate).toLocaleDateString('uk-UA') : '—'}
+                      {overdueDays > 0 && ` (${overdueDays} дн прострочення)`}
+                    </div>
+                    {card.customer_phone && (
+                      <div className="text-xs text-slate-400 mt-0.5">{card.customer_phone}</div>
+                    )}
+                    {card.has_damage_items && (
+                      <div className="mt-1.5 flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1" data-testid={`return-damage-badge-${card.order_id}`}>
+                        <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
+                        {card.damage_items_count} поз. з пошкодженнями
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {filterBySearch(returnOrders).length > 4 && !showAllReturns && (
                 <button 
                   onClick={() => setShowAllReturns(true)}
                   className="text-center py-3 text-sm text-blue-600 hover:text-blue-800 font-medium hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                 >
-                  +{returnOrders.length - 4} більше замовлень - Показати всі
+                  +{filterBySearch(returnOrders).length - 4} більше замовлень - Показати всі
                 </button>
               )}
-              {returnOrders.length > 4 && showAllReturns && (
+              {filterBySearch(returnOrders).length > 4 && showAllReturns && (
                 <button 
                   onClick={() => setShowAllReturns(false)}
                   className="text-center py-3 text-sm text-corp-text-main hover:text-corp-text-dark font-medium hover:bg-slate-50 rounded-lg transition-colors cursor-pointer"
@@ -677,7 +762,7 @@ export default function ManagerDashboard() {
             </>
           ) : (
             <div className="rounded-2xl border border-slate-200 p-8 text-center text-slate-400">
-              Немає повернень сьогодні
+              {searchQuery ? 'Нічого не знайдено' : 'Немає повернень сьогодні'}
             </div>
           )}
         </Column>
@@ -737,16 +822,12 @@ export default function ManagerDashboard() {
       </main>
       {/* Footer moved to global LegalFooter in App.tsx */}
       
-      {/* ✅ Модалка чату */}
-      <OrdersChatModal 
-        isOpen={showChatModal} 
-        onClose={() => setShowChatModal(false)} 
-      />
+      {/* Чат замовлень перенесено в Особистий кабінет → вкладка "Замовлення" */}
     </div>
   );
 }
 
-function Filter({label, children}:{label:string, children:any}){
+function Filter({ label, children }) {
   return (
     <label className="flex flex-col gap-2">
       <span className="text-xs text-corp-text-muted uppercase tracking-wide font-medium">{label}</span>
@@ -755,11 +836,11 @@ function Filter({label, children}:{label:string, children:any}){
   );
 }
 
-function Kpi({title, value, note, tone}:{title:string,value:string,note?:string,tone?:'ok'|'warn'|'info'}){
-  const toneMap:any={
-    ok:'text-corp-success',
-    warn:'text-corp-warning',
-    info:'text-corp-primary'
+function Kpi({ title, value, note, tone }) {
+  const toneMap = {
+    ok: 'text-corp-success',
+    warn: 'text-corp-warning',
+    info: 'text-corp-primary'
   };
   return (
     <div className="corp-stat-card">
@@ -770,10 +851,10 @@ function Kpi({title, value, note, tone}:{title:string,value:string,note?:string,
   );
 }
 
-function Column({title, subtitle, children, tone}:{title:string,subtitle?:string,children:any,tone?:'ok'|'warn'|'info'}){
-  const ring:any={ok:'ring-emerald-100',warn:'ring-amber-100',info:'ring-slate-100'}
+function Column({ title, subtitle, children, tone }) {
+  const ring = { ok: 'ring-emerald-100', warn: 'ring-amber-100', info: 'ring-slate-100' }
   return (
-    <section className={`rounded-2xl border border-slate-200 p-4 shadow-sm ring-2 ${tone?ring[tone]:"ring-transparent"}`}>
+    <section className={`rounded-2xl border border-slate-200 p-4 shadow-sm ring-2 ${tone ? ring[tone] : "ring-transparent"}`}>
       <header className="mb-3 flex items-center justify-between">
         <div>
           <h3 className="text-base font-semibold leading-none">{title}</h3>
@@ -785,14 +866,78 @@ function Column({title, subtitle, children, tone}:{title:string,subtitle?:string
   );
 }
 
-function OrderCard({id,name,phone,rent,deposit,badge,onClick,order,onDateUpdate,onCancelByClient}:{id:string,name:string,phone:string,rent:string,deposit:string,badge:'new'|'issue'|'return'|'ready'|'issued'|'awaiting'|'processing'|'preparation'|'partial',onClick:()=>void,order?:any,onDateUpdate?:(orderId:string,issueDate:string,returnDate:string)=>void,onCancelByClient?:(orderId:number,orderNumber:string)=>void}){
-  const map:any={
-    new:{label:'Нове',css:'corp-badge corp-badge-info'},
-    awaiting:{label:'Очікує',css:'corp-badge corp-badge-warning'},
-    processing:{label:'В роботі',css:'corp-badge corp-badge-primary'},
-    preparation:{label:'На комплектації',css:'corp-badge corp-badge-gold'},
-    issue:{label:'Видача',css:'corp-badge corp-badge-success'},
-    return:{label:'Повернення',css:'corp-badge corp-badge-warning'},
+function DamagePhotoViewer({ photos, onClose }) {
+  const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
+  if (!photos || photos.length === 0) return null;
+  
+  const getPhotoUrl = (url) => {
+    if (!url) return '';
+    if (url.startsWith('http')) return url;
+    return `${BACKEND_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+  
+  return (
+    <div 
+      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+      data-testid="damage-photo-viewer-overlay"
+    >
+      <div 
+        className="bg-white rounded-2xl max-w-lg w-full max-h-[80vh] overflow-y-auto shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="sticky top-0 bg-white border-b border-slate-200 px-4 py-3 flex items-center justify-between rounded-t-2xl z-10">
+          <h3 className="font-semibold text-slate-800 text-sm">Фото пошкоджень ({photos.length})</h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg font-bold" data-testid="damage-photo-viewer-close">✕</button>
+        </div>
+        <div className="p-4 grid grid-cols-2 gap-3">
+          {photos.map((photo, i) => (
+            <div key={i} className="rounded-xl overflow-hidden border border-slate-200">
+              <img 
+                src={getPhotoUrl(photo.photo_url)} 
+                alt={photo.note || 'Пошкодження'}
+                className="w-full h-36 object-contain bg-slate-50 cursor-pointer"
+                onClick={() => window.open(getPhotoUrl(photo.photo_url), '_blank')}
+              />
+              {photo.note && (
+                <div className="px-2 py-1.5 text-xs text-slate-600 bg-slate-50 border-t border-slate-100 truncate">
+                  <span className={`inline-block w-2 h-2 rounded-full mr-1 ${
+                    photo.severity === 'critical' ? 'bg-red-500' :
+                    photo.severity === 'high' ? 'bg-orange-500' :
+                    photo.severity === 'medium' ? 'bg-amber-500' : 'bg-green-500'
+                  }`}></span>
+                  {photo.note}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OrderCard({ id, name, phone, rent, deposit, badge, onClick, order, onDateUpdate, onCancelByClient }) {
+  // Маячок - перевіряємо чи ордер змінився з останнього перегляду
+  const seenKey = `order_seen_${order?.order_id}`;
+  const seenAt = localStorage.getItem(seenKey);
+  const updatedAt = order?.updated_at;
+  const hasChanges = updatedAt && (!seenAt || new Date(updatedAt) > new Date(seenAt));
+  
+  const handleClick = () => {
+    // Зберігаємо час перегляду
+    if (order?.order_id) {
+      localStorage.setItem(seenKey, new Date().toISOString());
+    }
+    if (onClick) onClick();
+  };
+  const map = {
+    new: { label: 'Нове', css: 'corp-badge corp-badge-info' },
+    awaiting: { label: 'Очікує', css: 'corp-badge corp-badge-warning' },
+    processing: { label: 'В роботі', css: 'corp-badge corp-badge-primary' },
+    preparation: { label: 'На комплектації', css: 'corp-badge corp-badge-gold' },
+    issue: { label: 'Видача', css: 'corp-badge corp-badge-success' },
+    return: { label: 'Повернення', css: 'corp-badge corp-badge-warning' },
     ready:{label:'Готово',css:'corp-badge corp-badge-success'},
     issued:{label:'Видано',css:'corp-badge corp-badge-success'},
     partial:{label:'⚠️ Часткове',css:'bg-red-100 text-red-800 px-2 py-0.5 rounded-full text-xs font-medium'}
@@ -805,6 +950,11 @@ function OrderCard({id,name,phone,rent,deposit,badge,onClick,order,onDateUpdate,
   const [issueDate, setIssueDate] = React.useState(order?.issue_date || '');
   const [returnDate, setReturnDate] = React.useState(order?.return_date || '');
   const [isSaving, setIsSaving] = React.useState(false);
+  const [showDamagePhotos, setShowDamagePhotos] = React.useState(false);
+  
+  const hasDamage = order?.has_damage_items;
+  const damagePhotos = order?.damage_photos || [];
+  const damageCount = order?.damage_items_count || 0;
   
   const handleSaveDates = async (e) => {
     e.stopPropagation();
@@ -841,6 +991,17 @@ function OrderCard({id,name,phone,rent,deposit,badge,onClick,order,onDateUpdate,
         <div className="flex items-center gap-2 flex-wrap">
           <span className={badgeInfo.css}>{badgeInfo.label}</span>
           <span className="text-corp-text-muted text-sm font-medium">#{id}</span>
+          {hasDamage && (
+            <span 
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold cursor-pointer hover:bg-amber-200 transition-colors"
+              onClick={(e) => { e.stopPropagation(); if (damagePhotos.length > 0) setShowDamagePhotos(true); }}
+              title={`${damageCount} позицій з пошкодженнями`}
+              data-testid={`damage-badge-${order?.order_id}`}
+            >
+              <svg className="w-3 h-3" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" /></svg>
+              {damageCount}
+            </span>
+          )}
         </div>
         {badge === 'new' && onDateUpdate && !isEditing && (
           <button 
@@ -852,6 +1013,11 @@ function OrderCard({id,name,phone,rent,deposit,badge,onClick,order,onDateUpdate,
           </button>
         )}
       </div>
+      
+      {/* Damage photo viewer modal */}
+      {showDamagePhotos && (
+        <DamagePhotoViewer photos={damagePhotos} onClose={() => setShowDamagePhotos(false)} />
+      )}
       
       {/* Customer info - mobile optimized */}
       <div className="mb-3">
@@ -919,18 +1085,28 @@ function OrderCard({id,name,phone,rent,deposit,badge,onClick,order,onDateUpdate,
         ) : null
       )}
       
-      {/* Finance row */}
-      <div className="grid grid-cols-2 gap-2 text-sm">
-        <div className="rounded-xl bg-slate-50 px-3 py-2.5 text-center">
-          <div className="text-corp-text-muted text-xs">Сума</div>
-          <div className="font-bold text-base tabular-nums">{rent}</div>
-        </div>
-        <div className="rounded-xl bg-amber-50 px-3 py-2.5 text-center">
-          <div className="text-corp-text-muted text-xs">Застава</div>
-          <div className="font-bold text-base tabular-nums text-amber-700">{deposit}</div>
-        </div>
-      </div>
-      
+      {/* Packing progress bar for preparation cards */}
+      {badge === 'preparation' && (() => {
+        const items = order?.items || [];
+        const totalQty = items.reduce((s, it) => s + (it.qty || it.quantity || 1), 0);
+        const pickedQty = items.reduce((s, it) => s + (it.picked_qty || 0), 0);
+        const progress = totalQty > 0 ? Math.round((pickedQty / totalQty) * 100) : 0;
+        return (
+          <div className="mt-3 pt-3 border-t border-slate-100" data-testid={`packing-progress-${id}`}>
+            <div className="flex items-center justify-between text-xs mb-1">
+              <span className="text-slate-500">Прогрес комплектації</span>
+              <span className={`font-medium ${progress === 100 ? 'text-emerald-600' : 'text-slate-700'}`}>{progress}%</span>
+            </div>
+            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+              <div 
+                className={`h-full rounded-full transition-all duration-300 ${progress === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Cancel button - bigger for mobile */}
       {onCancelByClient && ['awaiting', 'processing', 'preparation', 'ready'].includes(badge) && (
         <button
@@ -943,13 +1119,29 @@ function OrderCard({id,name,phone,rent,deposit,badge,onClick,order,onDateUpdate,
           🚫 Клієнт відмовився
         </button>
       )}
+      
+      {/* Damage photos quick access button */}
+      {hasDamage && damagePhotos.length > 0 && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setShowDamagePhotos(true); }}
+          className="mt-2 w-full text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 font-medium hover:bg-amber-100 active:bg-amber-200 transition-colors flex items-center justify-center gap-1.5"
+          data-testid={`damage-photos-btn-${order?.order_id}`}
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M1 8a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 018.07 3h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0016.07 6H17a2 2 0 012 2v7a2 2 0 01-2 2H3a2 2 0 01-2-2V8zm13.5 3a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM10 14a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" /></svg>
+          Фото пошкоджень ({damagePhotos.length})
+        </button>
+      )}
     </article>
   );
 }
 
-function OrderCardWithArchive({id,name,phone,rent,deposit,badge,onClick,order,onArchive}:{id:string,name:string,phone:string,rent:string,deposit:string,badge:string,onClick:()=>void,order?:any,onArchive?:(orderId:number,orderNumber:string)=>void}){
+function OrderCardWithArchive({ id, name, phone, rent, deposit, badge, onClick, order, onArchive }) {
   return (
-    <article onClick={onClick} className="relative cursor-pointer rounded-xl border border-slate-200 bg-white p-3 transition hover:border-teal-400 hover:shadow-lg">
+    <article onClick={handleClick} className={`relative cursor-pointer rounded-xl border ${hasChanges ? 'border-blue-400 ring-2 ring-blue-100' : 'border-slate-200'} bg-white p-3 transition hover:border-teal-400 hover:shadow-lg`}>
+      {/* Маячок змін */}
+      {hasChanges && (
+        <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-blue-500 rounded-full border-2 border-white animate-pulse" data-testid={`change-beacon-${order?.order_id}`} title="Менеджер вніс зміни" />
+      )}
       <div className="mb-2 flex items-center justify-between">
         <div className="text-sm font-semibold text-corp-text-dark">{id}</div>
       </div>
@@ -983,7 +1175,7 @@ function OrderCardWithArchive({id,name,phone,rent,deposit,badge,onClick,order,on
   );
 }
 
-function NavCard({title, description, onClick}:{title:string, description:string, onClick:()=>void}){
+function NavCard({ title, description, onClick }) {
   return (
     <article 
       className="corp-card cursor-pointer hover:border-corp-primary group"

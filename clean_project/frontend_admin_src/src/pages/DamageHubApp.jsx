@@ -1,1064 +1,1162 @@
 /* eslint-disable */
 /**
- * DamageHubApp - Кабінет шкоди (Unified Version)
+ * DamageHubApp - Кабінет шкоди
  * 
- * Оновлення:
- * - Єдиний екран з 3 колонками (як FinanceHub)
- * - Фото з можливістю збільшення
- * - Архів кейсів
- * - БЕЗ фінансових дій (тільки інформування)
- * - Хімчистка з партіями та частковим поверненням
+ * Три колонки: Мийка | Реставрація | Пральня (черга + партії)
+ * Декор летить одразу з повернення у відповідну чергу
  */
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import CorporateHeader from "../components/CorporateHeader";
-import { X, Search, Archive, Package, Droplets, Wrench, Sparkles, ChevronDown, ChevronRight, RefreshCw, Eye, Check, AlertTriangle } from "lucide-react";
+import { getImageUrl, handleImageError, FALLBACK_IMAGE } from "../utils/imageHelper";
+import { Search, Droplets, Wrench, Shirt, Package, RefreshCw, Check, X, ChevronDown, ChevronRight, Plus, Clock, ArrowRight, Printer, Camera, Trash2 } from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
-
-// ============= HELPERS =============
-const cls = (...classes) => classes.filter(Boolean).join(" ");
-const money = (n) => `₴${(+n || 0).toFixed(2)}`;
+const fmtTime = (d) => d ? new Date(d).toLocaleString("uk-UA", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString("uk-UA") : "—";
 
 const authFetch = async (url, options = {}) => {
   const token = localStorage.getItem("token");
-  const defaultHeaders = { "Content-Type": "application/json" };
-  if (token) defaultHeaders["Authorization"] = `Bearer ${token}`;
-  const response = await fetch(url, { ...options, headers: { ...defaultHeaders, ...options.headers } });
-  return response;
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return fetch(url, { ...options, headers: { ...headers, ...options.headers } });
 };
 
 const getPhotoUrl = (item) => {
-  if (!item) return null;
-  if (item.photo_url) return item.photo_url;
-  if (item.image_url) return item.image_url;
-  if (item.image) return item.image.startsWith("http") ? item.image : `${BACKEND_URL}${item.image}`;
-  return null;
+  return getImageUrl(item?.product_image || item?.photo_url || item?.image_url || item?.image);
 };
 
-// ============= COMPONENTS =============
+// ============= QUICK ADD POPOVER =============
+const QuickAddPopover = ({ queueType, onAdd, onClose }) => {
+  const [query, setQuery] = useState('');
+  const [qty, setQty] = useState(1);
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [adding, setAdding] = useState(null);
+  const inputRef = useRef(null);
+  const timerRef = useRef(null);
 
-// Badge компонент
-const Badge = ({ tone = "neutral", children, className = "" }) => {
-  const colors = {
-    ok: "bg-emerald-100 text-emerald-700 border-emerald-200",
-    warn: "bg-amber-100 text-amber-700 border-amber-200",
-    danger: "bg-red-100 text-red-700 border-red-200",
-    info: "bg-blue-100 text-blue-700 border-blue-200",
-    neutral: "bg-slate-100 text-slate-600 border-slate-200",
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const doSearch = (q) => {
+    clearTimeout(timerRef.current);
+    if (!q || q.length < 2) { setResults([]); setLoading(false); return; }
+    setLoading(true);
+    timerRef.current = setTimeout(async () => {
+      try {
+        const res = await authFetch(`${BACKEND_URL}/api/catalog?search=${encodeURIComponent(q)}&limit=20`);
+        const data = await res.json();
+        const items = Array.isArray(data) ? data : (data.products || data.items || []);
+        setResults(items);
+      } catch {
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
   };
+
+  const handleAdd = async (product) => {
+    const pid = product.product_id || product.id;
+    setAdding(pid);
+    try {
+      await onAdd({
+        product_id: pid,
+        sku: product.sku || '',
+        product_name: product.name || product.product_name || '',
+        category: product.category || product.category_name || '',
+        queue_type: queueType,
+        quantity: qty,
+        notes: `Додано вручну (${qty} шт)`
+      });
+      setQuery('');
+      setResults([]);
+      setQty(1);
+    } catch {
+      // handled upstream
+    } finally {
+      setAdding(null);
+    }
+  };
+
+  const queueLabel = { wash: 'Мийку', restoration: 'Реставрацію', laundry: 'Пральню' }[queueType] || queueType;
+  const queueColor = { wash: 'blue', restoration: 'orange', laundry: 'purple' }[queueType] || 'slate';
+
   return (
-    <span className={cls("inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium", colors[tone], className)}>
-      {children}
-    </span>
-  );
-};
-
-// Фото з можливістю збільшення
-const ProductPhoto = ({ item, size = "md", className = "", onClick }) => {
-  const photoUrl = getPhotoUrl(item);
-  const sizes = {
-    sm: "w-10 h-10",
-    md: "w-14 h-14",
-    lg: "w-20 h-20",
-    xl: "w-28 h-28"
-  };
-  
-  if (!photoUrl) {
-    return (
-      <div className={cls(
-        sizes[size] || sizes.md,
-        "rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 text-xs flex-shrink-0",
-        className
-      )}>
-        <Package className="w-5 h-5" />
+    <div className="absolute top-full left-0 right-0 mt-1 z-40 rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden" data-testid="quick-add-popover">
+      <div className={`px-3 py-2 border-b bg-${queueColor}-50 flex items-center justify-between`}>
+        <span className={`text-xs font-semibold text-${queueColor}-700`}>Додати в {queueLabel}</span>
+        <button onClick={onClose} className="p-1 text-slate-400 hover:text-slate-600 rounded-md hover:bg-white/60">
+          <X className="w-3.5 h-3.5" />
+        </button>
       </div>
-    );
-  }
-  
-  return (
-    <img 
-      src={photoUrl} 
-      alt={item.product_name || item.name || "Товар"} 
-      className={cls(
-        sizes[size] || sizes.md, 
-        "rounded-lg object-cover border border-slate-200 cursor-pointer hover:opacity-90 transition flex-shrink-0",
-        className
-      )}
-      onClick={onClick}
-      onError={(e) => { e.target.style.display = 'none'; }}
-    />
-  );
-};
+      <div className="flex items-center gap-2 p-2.5 border-b border-slate-100">
+        <Search className="w-4 h-4 text-slate-400 flex-shrink-0" />
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={e => { setQuery(e.target.value); doSearch(e.target.value); }}
+          onKeyDown={e => e.key === 'Escape' && onClose()}
+          placeholder="Артикул (SKU) або назва..."
+          className="flex-1 text-sm bg-transparent outline-none placeholder:text-slate-400"
+          data-testid="quick-add-search-input"
+        />
+        <div className="flex items-center gap-0.5 flex-shrink-0 border border-slate-200 rounded-lg">
+          <button onClick={() => setQty(Math.max(1, qty - 1))} className="px-1.5 py-0.5 text-slate-500 hover:text-slate-800 text-sm font-bold">-</button>
+          <input
+            type="number"
+            min={1}
+            value={qty}
+            onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+            className="w-8 text-center text-sm font-medium bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            data-testid="quick-add-qty-input"
+          />
+          <button onClick={() => setQty(qty + 1)} className="px-1.5 py-0.5 text-slate-500 hover:text-slate-800 text-sm font-bold">+</button>
+        </div>
+        {loading && <RefreshCw className="w-3.5 h-3.5 text-slate-400 animate-spin flex-shrink-0" />}
+      </div>
 
-// Модалка збільшеного фото
-const PhotoModal = ({ isOpen, photoUrl, productName, onClose }) => {
-  if (!isOpen) return null;
-  
-  return (
-    <div 
-      className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition"
-      >
-        <X className="w-6 h-6" />
-      </button>
-      <img 
-        src={photoUrl}
-        alt={productName}
-        className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-      />
+      <div className="max-h-[320px] overflow-y-auto">
+        {loading && results.length === 0 ? (
+          <div className="text-center py-6 text-slate-400 text-xs"><RefreshCw className="w-4 h-4 animate-spin mx-auto mb-1" />Пошук...</div>
+        ) : results.length === 0 ? (
+          <div className="text-center py-5 text-xs text-slate-400">
+            {query.length < 2 ? "Введіть мінімум 2 символи" : "Товари не знайдено"}
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-50">
+            {results.map(p => {
+              const pid = p.product_id || p.id;
+              const imgSrc = getImageUrl(p.image || p.image_url || p.cover || p.photo);
+              return (
+                <button
+                  key={pid}
+                  onClick={() => handleAdd(p)}
+                  disabled={adding === pid}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-emerald-50 transition-colors disabled:opacity-50"
+                  data-testid={`quick-add-item-${pid}`}
+                >
+                  {imgSrc ? (
+                    <img src={imgSrc} className="w-10 h-10 rounded-md object-cover border border-slate-200 flex-shrink-0" alt="" onError={handleImageError} />
+                  ) : (
+                    <div className="w-10 h-10 rounded-md bg-slate-100 border border-slate-200 flex items-center justify-center flex-shrink-0"><Package className="w-4 h-4 text-slate-400" /></div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-800 truncate">{p.name || p.product_name}</div>
+                    <div className="text-xs text-slate-500 truncate">{p.sku} {p.category_name ? `\u00B7 ${p.category_name}` : ''}</div>
+                  </div>
+                  <div className="text-right flex-shrink-0 mr-1">
+                    <div className="text-xs font-semibold text-slate-700">{p.available ?? p.quantity ?? '—'}</div>
+                    <div className="text-[10px] text-slate-400">доступно</div>
+                  </div>
+                  {adding === pid ? (
+                    <RefreshCw className="w-4 h-4 text-emerald-500 animate-spin flex-shrink-0" />
+                  ) : (
+                    <Plus className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
 
-// Картка товару в списку
-const DamageItemCard = ({ item, isSelected, onClick, onPhotoClick }) => {
-  const getProcessingInfo = () => {
-    const type = item.processing_type;
-    if (!type || type === 'none') return { icon: null, label: "Не розподілено", color: "text-amber-600" };
-    const map = {
-      wash: { icon: <Droplets className="w-4 h-4" />, label: "Мийка", color: "text-blue-600" },
-      restoration: { icon: <Wrench className="w-4 h-4" />, label: "Реставрація", color: "text-orange-600" },
-      laundry: { icon: <Sparkles className="w-4 h-4" />, label: "Хімчистка", color: "text-purple-600" },
-    };
-    return map[type] || { icon: null, label: type, color: "text-slate-600" };
+// ============= ITEM CARD =============
+const QueueItemCard = ({ item, onComplete, onDelete, onPhotoClick, completing }) => {
+  const [acceptQty, setAcceptQty] = useState(null); // null = не показувати, число = кількість
+  const photoUrl = getPhotoUrl(item);
+  const isInProgress = item.processing_status === 'in_progress';
+  
+  const totalQty = item.qty || 1;
+  const processedQty = item.processed_qty || 0;
+  const remaining = totalQty - processedQty;
+
+  const handleAccept = () => {
+    const qty = acceptQty ?? remaining;
+    onComplete(item.id, qty);
+    setAcceptQty(null);
   };
-  
-  const processing = getProcessingInfo();
-  const isCompleted = item.processing_status === 'completed';
-  
+
   return (
-    <div 
-      onClick={onClick}
-      className={cls(
-        "p-3 rounded-xl border bg-white cursor-pointer transition-all hover:shadow-md",
-        isSelected ? "ring-2 ring-blue-500 border-blue-300" : "border-slate-200 hover:border-slate-300",
-        isCompleted && "opacity-60"
-      )}
-    >
-      <div className="flex gap-3">
-        <ProductPhoto 
-          item={item} 
-          size="md" 
-          onClick={(e) => { e.stopPropagation(); onPhotoClick(item); }}
-        />
+    <div className={`p-2.5 sm:p-3 rounded-xl border bg-white transition-all hover:shadow-sm ${isInProgress ? 'border-blue-200 bg-blue-50/30' : 'border-slate-200'}`}>
+      <div className="flex gap-2 sm:gap-3">
+        {/* Photo */}
+        {photoUrl ? (
+          <img
+            src={photoUrl}
+            alt={item.product_name}
+            className="w-10 h-10 sm:w-14 sm:h-14 rounded-lg object-cover border border-slate-200 cursor-pointer hover:opacity-80 flex-shrink-0"
+            onClick={() => onPhotoClick?.(photoUrl, item.product_name)}
+            onError={handleImageError}
+          />
+        ) : (
+          <div className="w-10 h-10 sm:w-14 sm:h-14 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center flex-shrink-0">
+            <Package className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400" />
+          </div>
+        )}
+        
+        {/* Info */}
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <div>
-              <div className="font-medium text-slate-800 text-sm truncate">{item.product_name || item.name}</div>
-              <div className="text-xs text-slate-500">{item.sku}</div>
+            <div className="min-w-0">
+              <div className="font-semibold text-slate-800 text-sm truncate">{item.product_name}</div>
+              <div className="text-xs text-slate-500 font-mono">{item.sku}</div>
             </div>
-            <div className="text-right">
-              <div className="font-bold text-slate-800">{money(item.fee_amount || item.total_fee || 0)}</div>
-              {item.qty > 1 && <div className="text-xs text-slate-500">x{item.qty}</div>}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 mt-2">
-            <span className={cls("flex items-center gap-1 text-xs font-medium", processing.color)}>
-              {processing.icon}
-              {processing.label}
+            <span className="flex-shrink-0 px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-xs font-bold">
+              {processedQty > 0 ? `${processedQty}/${totalQty}` : totalQty} шт
             </span>
-            {item.processing_status === 'in_progress' && (
-              <Badge tone="info">В роботі</Badge>
-            )}
-            {isCompleted && (
-              <Badge tone="ok">✓ Готово</Badge>
+          </div>
+          
+          {/* Damage type */}
+          <div className="mt-1.5 px-2 py-1 rounded-lg bg-amber-50 border border-amber-100 text-xs text-amber-800 truncate" title={item.damage_type}>
+            {item.damage_type || "Не вказано"}
+          </div>
+          
+          {/* Meta row */}
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+            <span title="Замовлення">
+              <span className="font-medium text-slate-700">#{item.order_number}</span>
+            </span>
+            <span title="Відправлено">
+              {fmtTime(item.sent_to_processing_at || item.created_at)}
+            </span>
+            {item.created_by && (
+              <span className="truncate max-w-[120px]" title={`Розподілив: ${item.created_by}`}>
+                {item.created_by.split('@')[0]}
+              </span>
             )}
           </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Картка замовлення в лівій колонці
-const OrderCard = ({ order, isSelected, onClick, isArchived = false }) => {
-  const pendingCount = order.pending_assignment || 0;
-  const hasIssues = pendingCount > 0;
-  
-  return (
-    <div
-      onClick={onClick}
-      className={cls(
-        "p-3 rounded-xl border cursor-pointer transition-all",
-        isSelected ? "ring-2 ring-blue-500 border-blue-300 bg-blue-50" : "bg-white border-slate-200 hover:border-slate-300 hover:shadow-sm",
-        isArchived && "opacity-70"
-      )}
-    >
-      <div className="flex justify-between items-start">
-        <div>
-          <div className="font-bold text-slate-800">#{order.order_number}</div>
-          <div className="text-sm text-slate-600">{order.customer_name || "—"}</div>
-        </div>
-        <div className="text-right">
-          <div className="font-bold text-slate-800">{money(order.total_fee)}</div>
-          <div className="text-xs text-slate-500">{order.items_count} поз.</div>
+          
+          {/* Note */}
+          {item.note && (
+            <div className="mt-1.5 text-xs text-slate-600 italic truncate" title={item.note}>
+              {item.note}
+            </div>
+          )}
         </div>
       </div>
       
-      {hasIssues && (
-        <div className="mt-2 flex items-center gap-1 text-amber-600 text-xs font-medium">
-          <AlertTriangle className="w-3 h-3" />
-          {pendingCount} не розподілено
-        </div>
-      )}
-      
-      {isArchived && (
-        <div className="mt-2">
-          <Badge tone="neutral">В архіві</Badge>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// Картка партії хімчистки
-const LaundryBatchCard = ({ batch, isSelected, onClick }) => {
-  const progress = batch.total_items > 0 ? (batch.returned_items / batch.total_items) * 100 : 0;
-  const isComplete = batch.status === 'completed';
-  
-  return (
-    <div
-      onClick={onClick}
-      className={cls(
-        "p-3 rounded-xl border cursor-pointer transition-all",
-        isSelected ? "ring-2 ring-purple-500 border-purple-300 bg-purple-50" : "bg-white border-slate-200 hover:border-slate-300",
-        isComplete && "opacity-60"
-      )}
-    >
-      <div className="flex justify-between items-start">
-        <div>
-          <div className="font-bold text-slate-800">{batch.batch_number || batch.id?.slice(0, 8)}</div>
-          <div className="text-sm text-slate-600">{batch.laundry_company}</div>
-        </div>
-        {isComplete ? (
-          <Badge tone="ok">✓ Закрито</Badge>
-        ) : batch.status === 'partial_return' ? (
-          <Badge tone="warn">Частково</Badge>
+      {/* Action */}
+      <div className="mt-2 flex items-center justify-end gap-1.5 flex-wrap">
+        <button
+          onClick={() => onDelete(item.id)}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors flex items-center gap-1"
+        >
+          <X className="w-3.5 h-3.5" />
+          Видалити
+        </button>
+        
+        {remaining > 1 ? (
+          <div className="flex items-center gap-1">
+            <div className="flex items-center border border-emerald-200 rounded-lg overflow-hidden bg-emerald-50/50">
+              <button
+                onClick={() => setAcceptQty(Math.max(1, (acceptQty ?? remaining) - 1))}
+                className="px-1.5 py-1 text-emerald-600 hover:bg-emerald-100 text-xs font-bold"
+              >-</button>
+              <input
+                type="number"
+                min={1}
+                max={remaining}
+                value={acceptQty ?? remaining}
+                onChange={e => setAcceptQty(Math.max(1, Math.min(remaining, parseInt(e.target.value) || 1)))}
+                className="w-9 text-center text-xs font-semibold bg-transparent outline-none text-emerald-800 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                data-testid={`accept-qty-${item.id}`}
+              />
+              <button
+                onClick={() => setAcceptQty(Math.min(remaining, (acceptQty ?? remaining) + 1))}
+                className="px-1.5 py-1 text-emerald-600 hover:bg-emerald-100 text-xs font-bold"
+              >+</button>
+            </div>
+            <button
+              onClick={handleAccept}
+              disabled={completing === item.id}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50 transition-colors flex items-center gap-1"
+              data-testid={`accept-btn-${item.id}`}
+            >
+              <Check className="w-3.5 h-3.5" />
+              {completing === item.id ? '...' : 'Прийняти'}
+            </button>
+          </div>
         ) : (
-          <Badge tone="info">Відправлено</Badge>
+          <button
+            onClick={() => onComplete(item.id, remaining)}
+            disabled={completing === item.id}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 disabled:opacity-50 transition-colors flex items-center gap-1"
+          >
+            <Check className="w-3.5 h-3.5" />
+            {completing === item.id ? 'Обробка...' : 'Готово'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ============= COLUMN =============
+const QueueColumn = ({ title, icon: Icon, iconColor, queueType, items, loading, onComplete, onDelete, onPhotoClick, completing, searchQuery, onQuickAdd }) => {
+  const [showAdd, setShowAdd] = useState(false);
+  
+  const filtered = searchQuery 
+    ? items.filter(i => 
+        (i.product_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (i.sku || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (i.order_number || '').toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : items;
+  
+  const pendingCount = items.filter(i => i.processing_status === 'pending').length;
+  const inProgressCount = items.filter(i => i.processing_status === 'in_progress').length;
+
+  const openPrintList = () => {
+    window.open(`${BACKEND_URL}/api/documents/processing-list/${queueType}/preview`, '_blank');
+  };
+
+  return (
+    <div className="flex flex-col h-full min-w-0">
+      {/* Header */}
+      <div className="relative px-4 py-3 border-b border-slate-200 bg-white rounded-t-xl">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${iconColor}`}>
+              <Icon className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-bold text-slate-800 text-sm">{title}</div>
+              <div className="text-[11px] text-slate-500">
+                {pendingCount > 0 && <span className="text-amber-600 font-medium">{pendingCount} очікує</span>}
+                {pendingCount > 0 && inProgressCount > 0 && ' · '}
+                {inProgressCount > 0 && <span className="text-blue-600 font-medium">{inProgressCount} в роботі</span>}
+                {pendingCount === 0 && inProgressCount === 0 && <span>Порожньо</span>}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={openPrintList}
+              disabled={items.length === 0}
+              className="w-7 h-7 rounded-lg flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-600 transition disabled:opacity-30"
+              title="Друк списку"
+            >
+              <Printer className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setShowAdd(!showAdd)}
+              className="w-7 h-7 rounded-lg flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-600 transition"
+              title="Додати по артикулу"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+            <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-bold">
+              {filtered.length}
+            </span>
+          </div>
+        </div>
+        {showAdd && (
+          <QuickAddPopover
+            queueType={queueType}
+            onAdd={async (data) => { await onQuickAdd(data); setShowAdd(false); }}
+            onClose={() => setShowAdd(false)}
+          />
         )}
       </div>
       
-      <div className="mt-2">
-        <div className="flex justify-between text-xs text-slate-500 mb-1">
-          <span>Повернуто: {batch.returned_items}/{batch.total_items}</span>
-          <span>{Math.round(progress)}%</span>
-        </div>
-        <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
-          <div 
-            className={cls("h-full rounded-full transition-all", isComplete ? "bg-emerald-500" : "bg-purple-500")}
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+      {/* Items */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-slate-50/50">
+        {loading ? (
+          <div className="text-center py-12 text-slate-400 text-sm">Завантаження...</div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-12">
+            <Icon className={`w-8 h-8 mx-auto mb-2 text-slate-300`} />
+            <div className="text-slate-400 text-sm">
+              {searchQuery ? 'Нічого не знайдено' : 'Черга порожня'}
+            </div>
+          </div>
+        ) : (
+          filtered.map(item => (
+            <QueueItemCard
+              key={item.id}
+              item={item}
+              onComplete={onComplete}
+              onDelete={onDelete}
+              onPhotoClick={onPhotoClick}
+              completing={completing}
+            />
+          ))
+        )}
       </div>
     </div>
   );
 };
 
-// ============= MAIN COMPONENT =============
-export default function DamageHubApp() {
-  // View states
-  const [view, setView] = useState('active'); // 'active' | 'archive'
-  const [searchQuery, setSearchQuery] = useState('');
-  const [loading, setLoading] = useState(true);
+// ============= BATCH CARD =============
+const BatchCard = ({ batch, onToggle, isOpen, onReturnItem }) => {
+  const [returnQty, setReturnQty] = useState({});
+
+  const statusColors = {
+    sent: 'bg-blue-50 text-blue-700 border-blue-200',
+    partial_return: 'bg-amber-50 text-amber-700 border-amber-200',
+    returned: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    completed: 'bg-slate-50 text-slate-600 border-slate-200',
+  };
+  const statusLabels = {
+    sent: 'Відправлено',
+    partial_return: 'Часткове повернення',
+    returned: 'Повернено',
+    completed: 'Завершено',
+  };
+
+  const openBatchPrint = (e) => {
+    e.stopPropagation();
+    window.open(`${BACKEND_URL}/api/documents/laundry-batch/${batch.id}/preview`, '_blank');
+  };
+
+  const getRemaining = (item) => (item.quantity || 1) - (item.returned_quantity || 0);
+
+  const handleAccept = (e, item) => {
+    e.stopPropagation();
+    const remaining = getRemaining(item);
+    const qty = returnQty[item.id] ?? remaining;
+    if (qty < 1 || qty > remaining) return;
+    onReturnItem?.(batch.id, item, qty);
+    setReturnQty(prev => { const n = { ...prev }; delete n[item.id]; return n; });
+  };
   
-  // Data states
-  const [orderCases, setOrderCases] = useState([]);
-  const [archivedCases, setArchivedCases] = useState([]);
-  const [selectedOrderId, setSelectedOrderId] = useState(null);
-  const [selectedOrderItems, setSelectedOrderItems] = useState([]);
-  
-  // Processing items
-  const [washItems, setWashItems] = useState([]);
-  const [restoreItems, setRestoreItems] = useState([]);
-  const [laundryQueue, setLaundryQueue] = useState([]);
-  const [laundryBatches, setLaundryBatches] = useState([]);
-  const [selectedBatchId, setSelectedBatchId] = useState(null);
-  const [batchItems, setBatchItems] = useState([]);
-  
-  // Expanded sections in right panel
-  const [expandedSections, setExpandedSections] = useState({ wash: true, restore: true, laundry: true });
-  
-  // Photo modal
-  const [photoModal, setPhotoModal] = useState({ isOpen: false, url: null, name: null });
-  
-  // ============= DATA LOADING =============
-  const loadOrderCases = useCallback(async () => {
-    try {
-      // Завантажуємо активні кейси
-      const res = await authFetch(`${BACKEND_URL}/api/product-damage-history/cases/grouped`);
-      const data = await res.json();
-      setOrderCases(data.cases || []);
-      
-      // Завантажуємо архівовані кейси окремо
-      try {
-        const archiveRes = await authFetch(`${BACKEND_URL}/api/product-damage-history/archive`);
-        const archiveData = await archiveRes.json();
-        setArchivedCases(archiveData.cases || []);
-      } catch (e) {
-        console.log("Archive not available");
-        setArchivedCases([]);
-      }
-      
-      if (!selectedOrderId && data.cases?.length > 0) {
-        setSelectedOrderId(data.cases[0].order_id);
-      }
-    } catch (e) {
-      console.error("Error loading order cases:", e);
-    }
-  }, [selectedOrderId]);
-
-  const loadOrderDetails = useCallback(async (orderId) => {
-    if (!orderId) return;
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/product-damage-history/order/${orderId}`);
-      const data = await res.json();
-      setSelectedOrderItems(data.history || data.items || []);
-    } catch (e) {
-      console.error("Error loading order details:", e);
-      setSelectedOrderItems([]);
-    }
-  }, []);
-
-  const loadWashItems = useCallback(async () => {
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/product-damage-history/processing/wash`);
-      const data = await res.json();
-      setWashItems(data.items || []);
-    } catch (e) {
-      setWashItems([]);
-    }
-  }, []);
-
-  const loadRestoreItems = useCallback(async () => {
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/product-damage-history/processing/restoration`);
-      const data = await res.json();
-      setRestoreItems(data.items || []);
-    } catch (e) {
-      setRestoreItems([]);
-    }
-  }, []);
-
-  const loadLaundryQueue = useCallback(async () => {
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/laundry/queue`);
-      const data = await res.json();
-      setLaundryQueue(data.items || []);
-    } catch (e) {
-      setLaundryQueue([]);
-    }
-  }, []);
-
-  const loadLaundryBatches = useCallback(async () => {
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/laundry/batches`);
-      const data = await res.json();
-      setLaundryBatches(data.batches || data || []);
-    } catch (e) {
-      setLaundryBatches([]);
-    }
-  }, []);
-
-  const loadBatchItems = useCallback(async (batchId) => {
-    if (!batchId) return;
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/laundry/batches/${batchId}`);
-      const data = await res.json();
-      setBatchItems(data.items || []);
-    } catch (e) {
-      setBatchItems([]);
-    }
-  }, []);
-
-  // Initial load
-  useEffect(() => {
-    const loadAll = async () => {
-      setLoading(true);
-      await Promise.all([
-        loadOrderCases(),
-        loadWashItems(),
-        loadRestoreItems(),
-        loadLaundryQueue(),
-        loadLaundryBatches()
-      ]);
-      setLoading(false);
-    };
-    loadAll();
-  }, []);
-
-  useEffect(() => {
-    if (selectedOrderId) loadOrderDetails(selectedOrderId);
-  }, [selectedOrderId, loadOrderDetails]);
-
-  useEffect(() => {
-    if (selectedBatchId) loadBatchItems(selectedBatchId);
-  }, [selectedBatchId, loadBatchItems]);
-
-  // ============= HANDLERS =============
-  const handleSendTo = async (itemId, processingType) => {
-    try {
-      const endpoint = { 
-        wash: "send-to-wash", 
-        restoration: "send-to-restoration", 
-        laundry: "send-to-laundry", 
-        return_to_stock: "return-to-stock" 
-      }[processingType];
-      if (!endpoint) return;
-      
-      await authFetch(`${BACKEND_URL}/api/product-damage-history/${itemId}/${endpoint}`, {
-        method: "POST",
-        body: JSON.stringify({ notes: "Відправлено з кабінету шкоди" })
-      });
-      
-      await loadOrderDetails(selectedOrderId);
-      await loadOrderCases();
-      if (processingType === "wash") await loadWashItems();
-      if (processingType === "restoration") await loadRestoreItems();
-      if (processingType === "laundry") { await loadLaundryQueue(); await loadLaundryBatches(); }
-    } catch (e) {
-      alert("Помилка відправки на обробку");
-    }
-  };
-
-  const handleComplete = async (itemId, notes = "") => {
-    try {
-      await authFetch(`${BACKEND_URL}/api/product-damage-history/${itemId}/complete-processing`, {
-        method: "POST",
-        body: JSON.stringify({ notes: notes || "Обробку завершено" })
-      });
-      
-      await loadWashItems();
-      await loadRestoreItems();
-      alert("✅ Обробку завершено!");
-    } catch (e) {
-      alert("Помилка завершення обробки");
-    }
-  };
-
-  const handleArchiveCase = async (orderId) => {
-    if (!confirm("Відправити кейс в архів?")) return;
-    
-    try {
-      await authFetch(`${BACKEND_URL}/api/product-damage-history/order/${orderId}/archive`, {
-        method: "POST"
-      });
-      
-      await loadOrderCases();
-      alert("✅ Кейс відправлено в архів");
-    } catch (e) {
-      alert("Помилка архівації");
-    }
-  };
-
-  const handleRestoreFromArchive = async (orderId) => {
-    try {
-      await authFetch(`${BACKEND_URL}/api/product-damage-history/order/${orderId}/restore`, {
-        method: "POST"
-      });
-      
-      await loadOrderCases();
-      alert("✅ Кейс відновлено з архіву");
-    } catch (e) {
-      alert("Помилка відновлення");
-    }
-  };
-
-  const handleAddToBatch = async (itemIds) => {
-    const company = prompt("Введіть назву хімчистки:", "Прана");
-    if (!company) return;
-    
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/laundry/queue/add-to-batch`, {
-        method: "POST",
-        body: JSON.stringify({ item_ids: itemIds, laundry_company: company })
-      });
-      
-      if (!res.ok) {
-        const errData = await res.json();
-        alert(`Помилка: ${errData.detail}`);
-        return;
-      }
-      
-      await loadLaundryQueue();
-      await loadLaundryBatches();
-      alert("✅ Партію сформовано");
-    } catch (e) {
-      alert("Помилка формування партії");
-    }
-  };
-
-  const handleReceiveBatchItem = async (batchId, itemId, quantity) => {
-    try {
-      await authFetch(`${BACKEND_URL}/api/laundry/batches/${batchId}/return-items`, {
-        method: "POST",
-        body: JSON.stringify([{
-          item_id: itemId,
-          returned_quantity: quantity,
-          condition_after: "clean"
-        }])
-      });
-      
-      await loadLaundryBatches();
-      await loadBatchItems(batchId);
-      alert("✅ Товар прийнято");
-    } catch (e) {
-      alert("Помилка прийому");
-    }
-  };
-
-  const handleCloseBatch = async (batchId) => {
-    try {
-      await authFetch(`${BACKEND_URL}/api/laundry/batches/${batchId}/complete`, { method: "POST" });
-      await loadLaundryBatches();
-      alert("✅ Партію закрито");
-    } catch (e) {
-      alert("Помилка закриття партії");
-    }
-  };
-
-  // Списання товару при повній втраті
-  const handleWriteOff = async (item) => {
-    const qty = item.qty || 1;
-    if (!confirm(`Списати ${qty} шт. "${item.product_name || item.sku}" через повну втрату?\n\nТовар буде відправлено в переоблік зі статусом "Списано".`)) {
-      return;
-    }
-    
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/product-damage-history/${item.id}/write-off`, {
-        method: "POST",
-        body: JSON.stringify({ 
-          qty: qty,
-          reason: "Повна втрата (списано з кабінету шкоди)",
-          damage_type: item.damage_type || "TOTAL_LOSS"
-        })
-      });
-      
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.detail || "Помилка списання");
-      }
-      
-      await loadOrderDetails(selectedOrderId);
-      await loadOrderCases();
-      alert("✅ Товар списано! Кількість оновлено в переобліку.");
-    } catch (e) {
-      alert(`❌ Помилка: ${e.message}`);
-    }
-  };
-
-  const toggleSection = (section) => {
-    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
-  };
-
-  // ============= COMPUTED =============
-  const selectedOrder = useMemo(() => {
-    const allCases = [...orderCases, ...archivedCases];
-    return allCases.find(c => c.order_id === selectedOrderId);
-  }, [orderCases, archivedCases, selectedOrderId]);
-
-  const selectedBatch = useMemo(() => 
-    laundryBatches.find(b => b.id === selectedBatchId),
-  [laundryBatches, selectedBatchId]);
-
-  const filteredCases = useMemo(() => {
-    const cases = view === 'archive' ? archivedCases : orderCases;
-    if (!searchQuery.trim()) return cases;
-    const q = searchQuery.toLowerCase();
-    return cases.filter(c => 
-      `${c.order_number || ''} ${c.customer_name || ''}`.toLowerCase().includes(q)
-    );
-  }, [view, orderCases, archivedCases, searchQuery]);
-
-  const stats = useMemo(() => ({
-    activeCases: orderCases.length,
-    archivedCases: archivedCases.length,
-    washCount: washItems.filter(i => i.processing_status !== 'completed').length,
-    restoreCount: restoreItems.filter(i => i.processing_status !== 'completed').length,
-    laundryQueue: laundryQueue.length,
-    activeBatches: laundryBatches.filter(b => b.status !== 'completed').length,
-    pendingAssignment: orderCases.reduce((sum, c) => sum + (c.pending_assignment || 0), 0)
-  }), [orderCases, archivedCases, washItems, restoreItems, laundryQueue, laundryBatches]);
-
-  // ============= RENDER =============
   return (
-    <div className="min-h-screen bg-slate-50 font-montserrat">
-      <CorporateHeader cabinetName="Кабінет шкоди" />
-      
-      <div className="max-w-[1600px] mx-auto p-4">
-        {/* KPI Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-4">
-          <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-sm">
-            <div className="text-xs text-slate-500">Активні кейси</div>
-            <div className="text-2xl font-bold text-slate-800">{stats.activeCases}</div>
+    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      <button onClick={onToggle} className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 transition text-left">
+        {isOpen ? <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-slate-400 flex-shrink-0" />}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-sm text-slate-800 truncate">{batch.batch_number}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${statusColors[batch.status] || statusColors.sent}`}>
+              {statusLabels[batch.status] || batch.status}
+            </span>
           </div>
-          <div className="bg-amber-50 rounded-xl border border-amber-200 p-3">
-            <div className="text-xs text-amber-600">Не розподілено</div>
-            <div className="text-2xl font-bold text-amber-700">{stats.pendingAssignment}</div>
-          </div>
-          <div className="bg-blue-50 rounded-xl border border-blue-200 p-3">
-            <div className="text-xs text-blue-600 flex items-center gap-1"><Droplets className="w-3 h-3" /> Мийка</div>
-            <div className="text-2xl font-bold text-blue-700">{stats.washCount}</div>
-          </div>
-          <div className="bg-orange-50 rounded-xl border border-orange-200 p-3">
-            <div className="text-xs text-orange-600 flex items-center gap-1"><Wrench className="w-3 h-3" /> Реставрація</div>
-            <div className="text-2xl font-bold text-orange-700">{stats.restoreCount}</div>
-          </div>
-          <div className="bg-purple-50 rounded-xl border border-purple-200 p-3">
-            <div className="text-xs text-purple-600 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Черга хімч.</div>
-            <div className="text-2xl font-bold text-purple-700">{stats.laundryQueue}</div>
-          </div>
-          <div className="bg-purple-50 rounded-xl border border-purple-200 p-3">
-            <div className="text-xs text-purple-600">Активні партії</div>
-            <div className="text-2xl font-bold text-purple-700">{stats.activeBatches}</div>
-          </div>
-          <div className="bg-slate-100 rounded-xl border border-slate-200 p-3">
-            <div className="text-xs text-slate-500 flex items-center gap-1"><Archive className="w-3 h-3" /> Архів</div>
-            <div className="text-2xl font-bold text-slate-600">{stats.archivedCases}</div>
+          <div className="text-[11px] text-slate-500 flex gap-2">
+            <span>{batch.laundry_company}</span>
+            <span>·</span>
+            <span>{fmtDate(batch.sent_date)}</span>
+            <span>·</span>
+            <span>{batch.returned_items || 0}/{batch.total_items} шт</span>
           </div>
         </div>
-
-        {/* Main 3-Column Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          
-          {/* LEFT COLUMN - Orders */}
-          <div className="lg:col-span-3 space-y-3">
-            {/* Search & View Toggle */}
-            <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-sm">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="flex-1 relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Пошук..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <button
-                  onClick={() => { loadOrderCases(); loadWashItems(); loadRestoreItems(); loadLaundryQueue(); loadLaundryBatches(); }}
-                  className="p-2 border border-slate-200 rounded-lg hover:bg-slate-50 transition"
-                  title="Оновити"
-                >
-                  <RefreshCw className="w-4 h-4 text-slate-500" />
-                </button>
-              </div>
-              
-              {/* View Toggle */}
-              <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
-                <button
-                  onClick={() => setView('active')}
-                  className={cls(
-                    "flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition",
-                    view === 'active' ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  )}
-                >
-                  Активні ({orderCases.length})
-                </button>
-                <button
-                  onClick={() => setView('archive')}
-                  className={cls(
-                    "flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition flex items-center justify-center gap-1",
-                    view === 'archive' ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                  )}
-                >
-                  <Archive className="w-3 h-3" /> Архів ({archivedCases.length})
-                </button>
-              </div>
-            </div>
-
-            {/* Orders List */}
-            <div className="max-h-[calc(100vh-320px)] overflow-y-auto space-y-2 pr-1">
-              {loading ? (
-                <div className="text-center py-8 text-slate-400">Завантаження...</div>
-              ) : filteredCases.length === 0 ? (
-                <div className="text-center py-8 text-slate-400">
-                  {view === 'archive' ? "Архів порожній" : "Немає активних кейсів"}
-                </div>
-              ) : (
-                filteredCases.map(order => (
-                  <OrderCard
-                    key={order.order_id}
-                    order={order}
-                    isSelected={order.order_id === selectedOrderId}
-                    onClick={() => setSelectedOrderId(order.order_id)}
-                    isArchived={view === 'archive'}
-                  />
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* CENTER COLUMN - Order Items */}
-          <div className="lg:col-span-5">
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm h-[calc(100vh-260px)] flex flex-col">
-              {/* Header */}
-              <div className="p-4 border-b border-slate-200">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="font-bold text-slate-800">
-                      {selectedOrder ? `#${selectedOrder.order_number}` : "Оберіть замовлення"}
-                    </h3>
-                    {selectedOrder && (
-                      <div className="text-sm text-slate-500">{selectedOrder.customer_name}</div>
-                    )}
-                  </div>
-                  {selectedOrder && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg font-bold text-slate-800">{money(selectedOrder.total_fee)}</span>
-                      {view === 'active' ? (
-                        <button
-                          onClick={() => handleArchiveCase(selectedOrder.order_id)}
-                          className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition"
-                          title="В архів"
-                        >
-                          <Archive className="w-4 h-4" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleRestoreFromArchive(selectedOrder.order_id)}
-                          className="px-3 py-1.5 text-sm bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition"
-                        >
-                          Відновити
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Items List */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                {selectedOrderItems.length === 0 ? (
-                  <div className="text-center py-8 text-slate-400">
-                    {selectedOrder ? "Немає товарів" : "Оберіть замовлення зліва"}
-                  </div>
+        <button
+          onClick={openBatchPrint}
+          className="w-7 h-7 rounded-lg flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-600 transition flex-shrink-0"
+          title="Друк списку партії"
+        >
+          <Printer className="w-3.5 h-3.5" />
+        </button>
+      </button>
+      {isOpen && batch.items?.length > 0 && (
+        <div className="px-3 pb-3 space-y-1.5 border-t border-slate-100 pt-2">
+          {batch.items.map(item => {
+            const remaining = getRemaining(item);
+            const isReturned = remaining <= 0;
+            const currentQty = returnQty[item.id] ?? remaining;
+            return (
+              <div key={item.id} className={`flex items-center gap-2 py-1.5 px-2 rounded-lg text-xs ${isReturned ? 'bg-emerald-50/50' : 'hover:bg-slate-50'}`}>
+                {item.product_image ? (
+                  <img src={getPhotoUrl(item)} className="w-8 h-8 rounded-md object-cover border" alt="" onError={handleImageError} />
                 ) : (
-                  selectedOrderItems.map(item => {
-                    const isLoss = item.damage_code === 'TOTAL_LOSS' || item.damage_type?.toLowerCase().includes('втрата');
-                    const damageLabel = item.damage_type || item.damage_code || 'Невідомо';
-                    
-                    // Визначаємо колір бейджа за типом
-                    const getDamageBadge = () => {
-                      const code = item.damage_code?.toLowerCase() || '';
-                      const type = item.damage_type?.toLowerCase() || '';
-                      
-                      if (code === 'total_loss' || type.includes('втрата')) 
-                        return { tone: 'danger', label: '🔴 ПОВНА ВТРАТА' };
-                      if (code.includes('dirty') || code.includes('wet') || type.includes('бруд') || type.includes('волог'))
-                        return { tone: 'info', label: '🧼 ' + damageLabel };
-                      if (code.includes('broken') || code.includes('damaged') || code.includes('restore') || type.includes('бій') || type.includes('реставр'))
-                        return { tone: 'warn', label: '🔧 ' + damageLabel };
-                      if (code.includes('scratch') || code.includes('dent') || code.includes('chip'))
-                        return { tone: 'neutral', label: damageLabel };
-                      return { tone: 'neutral', label: damageLabel };
-                    };
-                    
-                    const badge = getDamageBadge();
-                    
-                    return (
-                      <div key={item.id} className={cls(
-                        "p-3 rounded-xl border bg-white",
-                        isLoss ? "border-red-300 bg-red-50" : "border-slate-200"
-                      )}>
-                        <div className="flex gap-3">
-                          <ProductPhoto
-                            item={item}
-                            size="lg"
-                            onClick={() => setPhotoModal({ isOpen: true, url: getPhotoUrl(item), name: item.product_name })}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <div className="font-semibold text-slate-800">{item.product_name}</div>
-                                <div className="text-sm text-slate-500">{item.sku}</div>
-                                {/* Кількість */}
-                                <div className="text-sm font-medium text-slate-700 mt-0.5">
-                                  Кількість: <span className="text-slate-900">{item.qty || 1} шт</span>
-                                </div>
-                                {/* Причина пошкодження */}
-                                <div className="mt-1">
-                                  <Badge tone={badge.tone}>{badge.label}</Badge>
-                                </div>
-                                {item.note && (
-                                  <div className="text-xs text-slate-500 mt-1 italic">"{item.note}"</div>
-                                )}
-                              </div>
-                              <div className="text-right">
-                                <div className="font-bold text-slate-800">{money(item.fee_amount || item.fee || 0)}</div>
-                                <div className="text-xs text-slate-500 mt-1">
-                                  {item.qty || 1} шт × {money((item.fee_amount || item.fee || 0) / (item.qty || 1))}/шт
-                                </div>
-                              </div>
-                            </div>
-                            
-                            {/* Action Buttons */}
-                            {(!item.processing_type || item.processing_type === 'none') && view === 'active' && (
-                              <div className="flex flex-wrap gap-2 mt-3">
-                                {/* Кнопка списання для повної втрати */}
-                                {isLoss && (
-                                  <button
-                                    onClick={() => handleWriteOff(item)}
-                                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition border border-red-300"
-                                  >
-                                    <X className="w-3 h-3" /> Списати ({item.qty || 1} шт)
-                                  </button>
-                                )}
-                                
-                                <button
-                                  onClick={() => handleSendTo(item.id, 'wash')}
-                                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition"
-                                >
-                                  <Droplets className="w-3 h-3" /> Мийка
-                                </button>
-                                <button
-                                  onClick={() => handleSendTo(item.id, 'restoration')}
-                                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition"
-                                >
-                                  <Wrench className="w-3 h-3" /> Реставрація
-                                </button>
-                                <button
-                                  onClick={() => handleSendTo(item.id, 'laundry')}
-                                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition"
-                                >
-                                  <Sparkles className="w-3 h-3" /> Хімчистка
-                                </button>
-                                <button
-                                  onClick={() => handleSendTo(item.id, 'return_to_stock')}
-                                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition"
-                                  title="Повернути на склад без обробки"
-                                >
-                                  <Package className="w-3 h-3" /> На склад (без обробки)
-                                </button>
-                              </div>
-                            )}
-                            
-                            {/* Processing Status */}
-                            {item.processing_type && item.processing_type !== 'none' && (
-                              <div className="mt-2 flex items-center gap-2">
-                                <Badge tone={item.processing_status === 'completed' ? 'ok' : 'info'}>
-                                  {item.processing_type === 'wash' && '🧼 Мийка'}
-                                  {item.processing_type === 'restoration' && '🔧 Реставрація'}
-                                  {item.processing_type === 'laundry' && '🧺 Хімчистка'}
-                                  {item.processing_status === 'completed' && ' ✓'}
-                                </Badge>
-                              </div>
-                            )}
-                            
-                            {/* Списано */}
-                            {item.processing_type === 'written_off' && (
-                              <div className="mt-2">
-                                <Badge tone="danger">❌ Списано</Badge>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
+                  <div className="w-8 h-8 rounded-md bg-slate-100 flex items-center justify-center"><Package className="w-3 h-3 text-slate-400"/></div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="truncate font-medium text-slate-700">{item.product_name}</div>
+                  <div className="text-slate-500 font-mono">{item.sku} · {item.returned_quantity || 0}/{item.quantity} шт</div>
+                </div>
+                {!isReturned && (
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setReturnQty(prev => ({ ...prev, [item.id]: Math.max(1, (prev[item.id] ?? remaining) - 1) })); }}
+                        className="px-1.5 py-0.5 text-slate-500 hover:bg-slate-100 text-xs font-bold"
+                      >-</button>
+                      <input
+                        type="number"
+                        min={1}
+                        max={remaining}
+                        value={currentQty}
+                        onClick={e => e.stopPropagation()}
+                        onChange={e => { const v = Math.max(1, Math.min(remaining, parseInt(e.target.value) || 1)); setReturnQty(prev => ({ ...prev, [item.id]: v })); }}
+                        className="w-8 text-center text-xs font-medium bg-transparent outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        data-testid={`batch-return-qty-${item.id}`}
+                      />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setReturnQty(prev => ({ ...prev, [item.id]: Math.min(remaining, (prev[item.id] ?? remaining) + 1) })); }}
+                        className="px-1.5 py-0.5 text-slate-500 hover:bg-slate-100 text-xs font-bold"
+                      >+</button>
+                    </div>
+                    <button
+                      onClick={(e) => handleAccept(e, item)}
+                      className="px-2 py-1 rounded-lg text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors"
+                      title={`Прийняти ${currentQty} з ${remaining}`}
+                      data-testid={`batch-accept-${item.id}`}
+                    >
+                      <Check className="w-3 h-3 inline mr-0.5" />
+                      Прийняти
+                    </button>
+                  </div>
+                )}
+                {isReturned && (
+                  <span className="px-2 py-1 text-[10px] font-semibold text-emerald-600 bg-emerald-100 rounded-full flex-shrink-0">Повернуто</span>
                 )}
               </div>
-            </div>
-          </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
 
-          {/* RIGHT COLUMN - Processing Status */}
-          <div className="lg:col-span-4 space-y-3">
-            
-            {/* МИЙКА Section */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <button
-                onClick={() => toggleSection('wash')}
-                className="w-full p-3 flex items-center justify-between bg-blue-50 border-b border-blue-100"
-              >
-                <span className="font-semibold text-blue-800 flex items-center gap-2">
-                  <Droplets className="w-4 h-4" /> Мийка ({washItems.length})
-                </span>
-                {expandedSections.wash ? <ChevronDown className="w-4 h-4 text-blue-600" /> : <ChevronRight className="w-4 h-4 text-blue-600" />}
-              </button>
-              
-              {expandedSections.wash && (
-                <div className="max-h-48 overflow-y-auto p-2 space-y-2">
-                  {washItems.length === 0 ? (
-                    <div className="text-center py-4 text-slate-400 text-sm">Немає товарів</div>
-                  ) : washItems.map(item => (
-                    <div key={item.id} className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg">
-                      <ProductPhoto item={item} size="sm" onClick={() => setPhotoModal({ isOpen: true, url: getPhotoUrl(item), name: item.product_name })} />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-slate-800 truncate">{item.product_name}</div>
-                        <div className="text-xs text-slate-500">{item.sku} • <span className="font-medium">{item.qty || 1} шт</span></div>
-                      </div>
-                      {item.processing_status !== 'completed' && (
-                        <button
-                          onClick={() => handleComplete(item.id)}
-                          className="p-1.5 bg-emerald-100 text-emerald-600 rounded-lg hover:bg-emerald-200 transition"
-                          title="Готово"
-                        >
-                          <Check className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+// ============= LAUNDRY COLUMN (з партіями) =============
+const LaundryColumn = ({ items, loading, onComplete, onDelete, onPhotoClick, completing, searchQuery, batches, batchesLoading, onCreateBatch, onRefreshBatches, onQuickAdd, onReturnBatchItem }) => {
+  const [tab, setTab] = useState('queue'); // queue | batches
+  const [openBatch, setOpenBatch] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [showBatchForm, setShowBatchForm] = useState(false);
+  const [batchCompany, setBatchCompany] = useState('');
+  const [batchType, setBatchType] = useState('laundry');
+  const [showAdd, setShowAdd] = useState(false);
 
-            {/* РЕСТАВРАЦІЯ Section */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <button
-                onClick={() => toggleSection('restore')}
-                className="w-full p-3 flex items-center justify-between bg-orange-50 border-b border-orange-100"
-              >
-                <span className="font-semibold text-orange-800 flex items-center gap-2">
-                  <Wrench className="w-4 h-4" /> Реставрація ({restoreItems.length})
-                </span>
-                {expandedSections.restore ? <ChevronDown className="w-4 h-4 text-orange-600" /> : <ChevronRight className="w-4 h-4 text-orange-600" />}
-              </button>
-              
-              {expandedSections.restore && (
-                <div className="max-h-48 overflow-y-auto p-2 space-y-2">
-                  {restoreItems.length === 0 ? (
-                    <div className="text-center py-4 text-slate-400 text-sm">Немає товарів</div>
-                  ) : restoreItems.map(item => (
-                    <div key={item.id} className="flex items-center gap-2 p-2 bg-slate-50 rounded-lg">
-                      <ProductPhoto item={item} size="sm" onClick={() => setPhotoModal({ isOpen: true, url: getPhotoUrl(item), name: item.product_name })} />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-slate-800 truncate">{item.product_name}</div>
-                        <div className="text-xs text-slate-500">{item.sku} • <span className="font-medium">{item.qty || 1} шт</span></div>
-                      </div>
-                      {item.processing_status !== 'completed' && (
-                        <button
-                          onClick={() => handleComplete(item.id)}
-                          className="p-1.5 bg-emerald-100 text-emerald-600 rounded-lg hover:bg-emerald-200 transition"
-                          title="Готово"
-                        >
-                          <Check className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+  const filtered = searchQuery
+    ? items.filter(i =>
+        (i.product_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (i.sku || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (i.order_number || '').toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : items;
 
-            {/* ХІМЧИСТКА Section */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <button
-                onClick={() => toggleSection('laundry')}
-                className="w-full p-3 flex items-center justify-between bg-purple-50 border-b border-purple-100"
-              >
-                <span className="font-semibold text-purple-800 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4" /> Хімчистка
-                </span>
-                {expandedSections.laundry ? <ChevronDown className="w-4 h-4 text-purple-600" /> : <ChevronRight className="w-4 h-4 text-purple-600" />}
-              </button>
-              
-              {expandedSections.laundry && (
-                <div className="p-2 space-y-3">
-                  {/* Черга */}
-                  {laundryQueue.length > 0 && (
-                    <div>
-                      <div className="flex items-center justify-between px-1 mb-2">
-                        <span className="text-xs font-semibold text-amber-700">Черга ({laundryQueue.length})</span>
-                        <button
-                          onClick={() => handleAddToBatch(laundryQueue.map(i => i.id))}
-                          className="text-xs px-2 py-1 bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 transition"
-                        >
-                          + Партія
-                        </button>
-                      </div>
-                      <div className="space-y-1 max-h-24 overflow-y-auto">
-                        {laundryQueue.map(item => (
-                          <div key={item.id} className="flex items-center gap-2 p-1.5 bg-amber-50 rounded-lg text-xs">
-                            <span className="font-medium text-slate-700">{item.sku}</span>
-                            <span className="text-slate-500 truncate">{item.product_name}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  
-                  {/* Партії */}
-                  <div>
-                    <div className="text-xs font-semibold text-purple-700 px-1 mb-2">Партії ({laundryBatches.length})</div>
-                    <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {laundryBatches.length === 0 ? (
-                        <div className="text-center py-4 text-slate-400 text-sm">Немає партій</div>
-                      ) : laundryBatches.map(batch => (
-                        <LaundryBatchCard
-                          key={batch.id}
-                          batch={batch}
-                          isSelected={batch.id === selectedBatchId}
-                          onClick={() => setSelectedBatchId(batch.id === selectedBatchId ? null : batch.id)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                  
-                  {/* Деталі партії */}
-                  {selectedBatch && (
-                    <div className="p-3 bg-purple-50 rounded-lg border border-purple-200">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="font-semibold text-purple-800">{selectedBatch.batch_number}</span>
-                        {selectedBatch.status !== 'completed' && (
-                          <button
-                            onClick={() => handleCloseBatch(selectedBatch.id)}
-                            className="text-xs px-2 py-1 bg-purple-200 text-purple-800 rounded hover:bg-purple-300"
-                          >
-                            Закрити партію
-                          </button>
-                        )}
-                      </div>
-                      <div className="space-y-1">
-                        {batchItems.map(item => {
-                          const remaining = item.quantity - (item.returned_quantity || 0);
-                          return (
-                            <div key={item.id} className="flex items-center justify-between p-2 bg-white rounded-lg text-sm">
-                              <div>
-                                <div className="font-medium text-slate-800">{item.sku}</div>
-                                <div className="text-xs text-slate-500">{item.product_name}</div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-slate-500">
-                                  {item.returned_quantity || 0}/{item.quantity}
-                                </span>
-                                {remaining > 0 && (
-                                  <button
-                                    onClick={() => handleReceiveBatchItem(selectedBatch.id, item.id, remaining)}
-                                    className="px-2 py-1 text-xs bg-emerald-100 text-emerald-700 rounded hover:bg-emerald-200"
-                                  >
-                                    Прийняти {remaining}
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+  // Items not yet in a batch
+  const queueItems = filtered.filter(i => !i.laundry_batch_id);
+  const pendingCount = queueItems.length;
+  const activeBatches = (batches || []).filter(b => b.status !== 'completed');
 
-            {/* Info Block */}
-            <div className="bg-blue-50 rounded-xl border border-blue-200 p-3">
-              <div className="flex items-start gap-2">
-                <Eye className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
-                <div className="text-xs text-blue-700">
-                  <strong>Інформація:</strong> Фінансові нарахування відображаються у фінансовому кабінеті. 
-                  Тут ви керуєте лише обробкою декору.
-                </div>
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleCreateBatch = async () => {
+    if (selectedIds.size === 0 || !batchCompany.trim()) return;
+    await onCreateBatch(Array.from(selectedIds), batchCompany, batchType);
+    setSelectedIds(new Set());
+    setShowBatchForm(false);
+    setBatchCompany('');
+  };
+
+  return (
+    <div className="flex flex-col h-full min-w-0">
+      {/* Header */}
+      <div className="relative px-4 py-3 border-b border-slate-200 bg-white rounded-t-xl">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-purple-100 text-purple-600">
+              <Shirt className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-bold text-slate-800 text-sm">Пральня</div>
+              <div className="text-[11px] text-slate-500">
+                {pendingCount > 0 && <span className="text-amber-600 font-medium">{pendingCount} в черзі</span>}
+                {activeBatches.length > 0 && pendingCount > 0 && ' · '}
+                {activeBatches.length > 0 && <span className="text-purple-600 font-medium">{activeBatches.length} партій</span>}
               </div>
             </div>
           </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => window.open(`${BACKEND_URL}/api/documents/processing-list/laundry/preview`, '_blank')}
+              disabled={items.length === 0}
+              className="w-7 h-7 rounded-lg flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-600 transition disabled:opacity-30"
+              title="Друк списку пральні"
+            >
+              <Printer className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setShowAdd(!showAdd)}
+              className="w-7 h-7 rounded-lg flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-600 transition"
+              title="Додати по артикулу"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+            <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 text-xs font-bold">
+              {items.length}
+            </span>
+          </div>
         </div>
+        {showAdd && (
+          <QuickAddPopover
+            queueType="laundry"
+            onAdd={async (data) => { await onQuickAdd(data); setShowAdd(false); }}
+            onClose={() => setShowAdd(false)}
+          />
+        )}
+        {/* Tabs */}
+        <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+          <button onClick={() => setTab('queue')} className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition ${tab === 'queue' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+            Черга ({queueItems.length})
+          </button>
+          <button onClick={() => setTab('batches')} className={`flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition ${tab === 'batches' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+            Партії ({activeBatches.length})
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-slate-50/50">
+        {loading || batchesLoading ? (
+          <div className="text-center py-12 text-slate-400 text-sm">Завантаження...</div>
+        ) : tab === 'queue' ? (
+          <>
+            {/* Batch creation toolbar */}
+            {queueItems.length > 0 && (
+              <div className="mb-2">
+                {selectedIds.size > 0 && !showBatchForm && (
+                  <button onClick={() => setShowBatchForm(true)} className="w-full px-3 py-2 rounded-lg text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 flex items-center justify-center gap-1.5">
+                    <Plus className="w-3.5 h-3.5" /> Сформувати партію ({selectedIds.size})
+                  </button>
+                )}
+                {showBatchForm && (
+                  <div className="p-3 rounded-xl border border-purple-200 bg-purple-50 space-y-2">
+                    <input
+                      type="text"
+                      value={batchCompany}
+                      onChange={e => setBatchCompany(e.target.value)}
+                      placeholder="Назва пральні / хімчистки..."
+                      className="w-full px-3 py-2 text-sm border rounded-lg"
+                    />
+                    <div className="flex gap-2">
+                      <select value={batchType} onChange={e => setBatchType(e.target.value)} className="flex-1 px-2 py-1.5 text-xs border rounded-lg">
+                        <option value="laundry">Хімчистка</option>
+                        <option value="wash">Прання</option>
+                      </select>
+                      <button onClick={handleCreateBatch} disabled={!batchCompany.trim()} className="px-4 py-1.5 rounded-lg text-xs font-medium bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50">
+                        Створити
+                      </button>
+                      <button onClick={() => setShowBatchForm(false)} className="px-3 py-1.5 rounded-lg text-xs border hover:bg-white">
+                        Ні
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {queueItems.length === 0 ? (
+              <div className="text-center py-12">
+                <Shirt className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+                <div className="text-slate-400 text-sm">{searchQuery ? 'Нічого не знайдено' : 'Черга порожня'}</div>
+              </div>
+            ) : (
+              queueItems.map(item => (
+                <div key={item.id} className="flex gap-2 items-start">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(item.id)}
+                    onChange={() => toggleSelect(item.id)}
+                    className="mt-4 w-4 h-4 rounded flex-shrink-0"
+                  />
+                  <div className="flex-1">
+                    <QueueItemCard item={item} onComplete={onComplete} onDelete={onDelete} onPhotoClick={onPhotoClick} completing={completing} />
+                  </div>
+                </div>
+              ))
+            )}
+          </>
+        ) : (
+          /* Batches tab */
+          activeBatches.length === 0 ? (
+            <div className="text-center py-12">
+              <Package className="w-8 h-8 mx-auto mb-2 text-slate-300" />
+              <div className="text-slate-400 text-sm">Немає активних партій</div>
+            </div>
+          ) : (
+            activeBatches.map(batch => (
+              <BatchCard key={batch.id} batch={batch} isOpen={openBatch === batch.id} onToggle={() => setOpenBatch(openBatch === batch.id ? null : batch.id)} onReturnItem={onReturnBatchItem} />
+            ))
+          )
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ============= PHOTO MODAL =============
+const PhotoModal = ({ isOpen, photoUrl, productName, onClose }) => {
+  if (!isOpen || !photoUrl) return null;
+  const fullUrl = getImageUrl(photoUrl);
+  return (
+    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4" onClick={onClose}>
+      <button onClick={onClose} className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white z-10">
+        <X className="w-6 h-6" />
+      </button>
+      <img src={fullUrl} alt={productName || ''} className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" onClick={e => e.stopPropagation()} />
+    </div>
+  );
+};
+
+// ============= MAIN =============
+export default function DamageHubApp() {
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [completing, setCompleting] = useState(null);
+  
+  const [washItems, setWashItems] = useState([]);
+  const [restoreItems, setRestoreItems] = useState([]);
+  const [laundryItems, setLaundryItems] = useState([]);
+  const [writtenOffItems, setWrittenOffItems] = useState([]);
+  const [writtenOffStats, setWrittenOffStats] = useState({ total_items: 0, total_loss_amount: 0 });
+  const [showWrittenOff, setShowWrittenOff] = useState(false);
+  const [photoRecords, setPhotoRecords] = useState([]);
+  const [showPhotoRecords, setShowPhotoRecords] = useState(false);
+  const [batches, setBatches] = useState([]);
+  const [batchesLoading, setBatchesLoading] = useState(false);
+  
+  const [photoModal, setPhotoModal] = useState({ isOpen: false, url: null, name: null });
+
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const results = await Promise.allSettled([
+        authFetch(`${BACKEND_URL}/api/product-damage-history/processing/wash`).then(r => r.ok ? r.json() : { items: [] }),
+        authFetch(`${BACKEND_URL}/api/product-damage-history/processing/restoration`).then(r => r.ok ? r.json() : { items: [] }),
+        authFetch(`${BACKEND_URL}/api/product-damage-history/processing/laundry`).then(r => r.ok ? r.json() : { items: [] }),
+        authFetch(`${BACKEND_URL}/api/product-damage-history/written-off`).then(r => r.ok ? r.json() : { items: [], total_items: 0, total_loss_amount: 0 }),
+        authFetch(`${BACKEND_URL}/api/product-damage-history/photo-records`).then(r => r.ok ? r.json() : { items: [] }),
+      ]);
+      
+      setWashItems(results[0].status === 'fulfilled' ? (results[0].value.items || []) : []);
+      setRestoreItems(results[1].status === 'fulfilled' ? (results[1].value.items || []) : []);
+      setLaundryItems(results[2].status === 'fulfilled' ? (results[2].value.items || []) : []);
+      if (results[3].status === 'fulfilled') {
+        setWrittenOffItems(results[3].value.items || []);
+        setWrittenOffStats({ total_items: results[3].value.total_items || 0, total_loss_amount: results[3].value.total_loss_amount || 0 });
+      }
+      if (results[4].status === 'fulfilled') {
+        setPhotoRecords(results[4].value.items || []);
+      }
+    } catch (e) {
+      console.error("Load error:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadBatches = useCallback(async () => {
+    setBatchesLoading(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/api/laundry/batches`);
+      if (res.ok) {
+        const data = await res.json();
+        setBatches(data || []);
+      }
+    } catch (e) {
+      console.error("Batches load error:", e);
+    } finally {
+      setBatchesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadAll(); loadBatches(); }, [loadAll, loadBatches]);
+
+  const handleComplete = async (itemId, qty) => {
+    setCompleting(itemId);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/api/product-damage-history/${itemId}/return-to-stock`, {
+        method: "POST",
+        body: JSON.stringify({ notes: "Обробку завершено", return_qty: qty || null })
+      });
+      if (res.ok) {
+        await loadAll();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || 'Помилка завершення');
+      }
+    } catch (e) {
+      console.error("Complete error:", e);
+      alert('Помилка з\'єднання');
+    } finally {
+      setCompleting(null);
+    }
+  };
+
+  const handleReturnBatchItem = async (batchId, item, qty) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/api/laundry/batches/${batchId}/return-items`, {
+        method: "POST",
+        body: JSON.stringify([
+          { item_id: String(item.id), returned_quantity: qty, condition_after: "clean" }
+        ])
+      });
+      if (res.ok) {
+        await Promise.all([loadAll(), loadBatches()]);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || 'Помилка повернення');
+      }
+    } catch (e) {
+      console.error("Batch return error:", e);
+    }
+  };
+
+
+  const handleCreateBatch = async (itemIds, company, batchType) => {
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const res = await authFetch(`${BACKEND_URL}/api/laundry/queue/add-to-batch`, {
+        method: "POST",
+        body: JSON.stringify({
+          item_ids: itemIds,
+          laundry_company: company,
+          batch_type: batchType,
+          created_by: user.name || user.firstname || 'system'
+        })
+      });
+      if (res.ok) {
+        await Promise.all([loadAll(), loadBatches()]);
+      }
+    } catch (e) {
+      console.error("Create batch error:", e);
+    }
+  };
+
+  const openPhoto = (url, name) => setPhotoModal({ isOpen: true, url, name });
+
+  const handleDelete = async (itemId) => {
+    if (!confirm('Видалити цю позицію з черги?')) return;
+    try {
+      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const res = await authFetch(`${BACKEND_URL}/api/product-damage-history/${itemId}`, {
+        method: "DELETE",
+        body: JSON.stringify({ deleted_by: user.name || 'system', reason: 'Видалено з кабінету шкоди' })
+      });
+      if (res.ok) await loadAll();
+    } catch (e) { console.error("Delete error:", e); }
+  };
+
+  const handleQuickAdd = async (data) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/api/product-damage-history/quick-add-to-queue`, {
+        method: "POST",
+        body: JSON.stringify(data)
+      });
+      if (res.ok) await loadAll();
+    } catch (e) { console.error("Quick add error:", e); }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <CorporateHeader />
+      
+      {/* Toolbar */}
+      <div className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm">
+        <div className="max-w-[1600px] mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+          <div className="flex items-center justify-between">
+            <h1 className="text-base sm:text-lg font-bold text-slate-800">Кабінет шкоди</h1>
+            <button
+              onClick={loadAll}
+              disabled={loading}
+              className="sm:hidden p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-50 transition"
+              title="Оновити"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+          
+          <div className="flex items-center gap-2 sm:gap-3 flex-1 sm:max-w-md">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Пошук..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-300 transition"
+                data-testid="damage-hub-search"
+              />
+            </div>
+          </div>
+          
+          <button
+            onClick={loadAll}
+            disabled={loading}
+            className="hidden sm:block p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 disabled:opacity-50 transition"
+            title="Оновити"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+      </div>
+
+      {/* Three columns */}
+      <div className="max-w-[1600px] mx-auto px-3 sm:px-4 py-3 sm:py-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:h-[calc(100vh-140px)]" data-testid="damage-hub-columns">
+          {/* Мийка */}
+          <div className="border border-slate-200 rounded-xl overflow-hidden bg-white flex flex-col h-[60vh] md:h-[70vh] lg:h-full" data-testid="wash-column">
+            <QueueColumn
+              title="Мийка"
+              icon={Droplets}
+              iconColor="bg-blue-100 text-blue-600"
+              queueType="wash"
+              items={washItems}
+              loading={loading}
+              onComplete={handleComplete}
+              onDelete={handleDelete}
+              onPhotoClick={openPhoto}
+              completing={completing}
+              searchQuery={searchQuery}
+              onQuickAdd={handleQuickAdd}
+            />
+          </div>
+          
+          {/* Реставрація */}
+          <div className="border border-slate-200 rounded-xl overflow-hidden bg-white flex flex-col h-[60vh] md:h-[70vh] lg:h-full" data-testid="restore-column">
+            <QueueColumn
+              title="Реставрація"
+              icon={Wrench}
+              iconColor="bg-orange-100 text-orange-600"
+              queueType="restoration"
+              items={restoreItems}
+              loading={loading}
+              onComplete={handleComplete}
+              onDelete={handleDelete}
+              onPhotoClick={openPhoto}
+              completing={completing}
+              searchQuery={searchQuery}
+              onQuickAdd={handleQuickAdd}
+            />
+          </div>
+          
+          {/* Пральня */}
+          <div className="border border-slate-200 rounded-xl overflow-hidden bg-white flex flex-col h-[60vh] md:h-[70vh] lg:h-full" data-testid="laundry-column">
+            <LaundryColumn
+              items={laundryItems}
+              loading={loading}
+              onComplete={handleComplete}
+              onDelete={handleDelete}
+              onPhotoClick={openPhoto}
+              completing={completing}
+              searchQuery={searchQuery}
+              batches={batches}
+              batchesLoading={batchesLoading}
+              onCreateBatch={handleCreateBatch}
+              onRefreshBatches={loadBatches}
+              onQuickAdd={handleQuickAdd}
+              onReturnBatchItem={handleReturnBatchItem}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Photo Records Section (Фіксації) */}
+      <div className="max-w-[1600px] mx-auto px-3 sm:px-4 pb-3">
+        <button 
+          onClick={() => setShowPhotoRecords(!showPhotoRecords)}
+          className="w-full flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-xl hover:bg-blue-100 transition"
+          data-testid="photo-records-toggle"
+        >
+          <div className="flex items-center gap-3">
+            <div className="p-1.5 bg-blue-100 rounded-lg"><Camera className="w-4 h-4 text-blue-600" /></div>
+            <span className="font-bold text-sm text-blue-800">Фіксації (фото до видачі / при поверненні)</span>
+            <span className="px-2 py-0.5 bg-blue-200 text-blue-800 rounded-full text-xs font-bold">{photoRecords.length}</span>
+          </div>
+          <ChevronDown className={`w-4 h-4 text-blue-400 transition-transform ${showPhotoRecords ? 'rotate-180' : ''}`} />
+        </button>
+        
+        {showPhotoRecords && (
+          <div className="mt-2 border border-blue-200 rounded-xl overflow-hidden bg-white">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-blue-50 border-b border-blue-200">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-blue-700">Фото</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-blue-700">Артикул</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-blue-700">Назва</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-blue-700">Замовлення</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-blue-700">Етап</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-blue-700">Фото фіксації</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-blue-700">Коментар</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-blue-700">Хто / Коли</th>
+                    <th className="px-3 py-2 text-center text-xs font-semibold text-blue-700"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {photoRecords.filter(item => {
+                    if (!searchQuery) return true;
+                    const q = searchQuery.toLowerCase();
+                    return (item.sku || '').toLowerCase().includes(q) || (item.product_name || '').toLowerCase().includes(q) || (item.order_number || '').toLowerCase().includes(q);
+                  }).map(item => (
+                    <tr key={item.id} className="hover:bg-blue-50/50">
+                      <td className="px-3 py-2">
+                        <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100">
+                          {item.product_image ? <img src={getImageUrl(item.product_image)} alt="" className="w-full h-full object-cover" onError={handleImageError} /> : <span className="flex items-center justify-center w-full h-full text-slate-400 text-xs">—</span>}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs font-bold text-slate-700">{item.sku}</td>
+                      <td className="px-3 py-2 text-slate-800 text-xs max-w-[160px] truncate">{item.product_name}</td>
+                      <td className="px-3 py-2 text-xs text-slate-600">{item.order_number || '—'}</td>
+                      <td className="px-3 py-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          item.stage === 'pre_issue' ? 'bg-amber-100 text-amber-800' : 
+                          item.stage === 'return' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                        }`}>
+                          {item.stage === 'pre_issue' ? 'До видачі' : item.stage === 'return' ? 'Повернення' : item.stage || '—'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        {item.photo_url ? (
+                          <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100 cursor-pointer border-2 border-blue-200 hover:border-blue-400 transition"
+                            onClick={() => openPhoto(item.photo_url, item.product_name)}>
+                            <img src={getImageUrl(item.photo_url)} alt="" className="w-full h-full object-cover" onError={handleImageError} />
+                          </div>
+                        ) : <span className="text-slate-400 text-xs">—</span>}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-600 max-w-[180px] truncate">{item.note || '—'}</td>
+                      <td className="px-3 py-2 text-xs text-slate-500">
+                        <div>{item.created_by || '—'}</div>
+                        <div>{fmtTime(item.created_at)}</div>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          onClick={async () => {
+                            if (!window.confirm(`Видалити фіксацію ${item.sku}?`)) return;
+                            try {
+                              await authFetch(`${BACKEND_URL}/api/product-damage-history/photo-records/${item.id}`, { method: 'DELETE' });
+                              setPhotoRecords(prev => prev.filter(r => r.id !== item.id));
+                            } catch {}
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-red-100 text-slate-400 hover:text-red-600 transition"
+                          title="Видалити"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {photoRecords.length === 0 && (
+                    <tr><td colSpan={9} className="px-3 py-8 text-center text-slate-400 text-sm">Немає фіксацій</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Written Off Section */}
+      <div className="max-w-[1600px] mx-auto px-3 sm:px-4 pb-6">
+        <button 
+          onClick={() => setShowWrittenOff(!showWrittenOff)}
+          className="w-full flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-xl hover:bg-red-100 transition"
+          data-testid="written-off-toggle"
+        >
+          <div className="flex items-center gap-3">
+            <div className="p-1.5 bg-red-100 rounded-lg"><X className="w-4 h-4 text-red-600" /></div>
+            <span className="font-bold text-sm text-red-800">Списані</span>
+            <span className="px-2 py-0.5 bg-red-200 text-red-800 rounded-full text-xs font-bold">{writtenOffItems.length}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-red-600">{writtenOffStats.total_items} шт / ₴{writtenOffStats.total_loss_amount.toLocaleString('uk-UA')}</span>
+            <ChevronDown className={`w-4 h-4 text-red-400 transition-transform ${showWrittenOff ? 'rotate-180' : ''}`} />
+          </div>
+        </button>
+        
+        {showWrittenOff && (
+          <div className="mt-2 border border-red-200 rounded-xl overflow-hidden bg-white">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-red-50 border-b border-red-200">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-red-700">Фото</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-red-700">Артикул</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-red-700">Назва</th>
+                    <th className="px-3 py-2 text-center text-xs font-semibold text-red-700">К-сть</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-red-700">Сума</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-red-700">Фото шкоди</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-red-700">Коментар</th>
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-red-700">Хто / Коли / Звідки</th>
+                    <th className="px-3 py-2 text-center text-xs font-semibold text-red-700 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {writtenOffItems.filter(item => {
+                    if (!searchQuery) return true;
+                    const q = searchQuery.toLowerCase();
+                    return (item.sku || '').toLowerCase().includes(q) || (item.product_name || '').toLowerCase().includes(q);
+                  }).map(item => (
+                    <tr key={item.id} className="hover:bg-red-50/50">
+                      <td className="px-3 py-2">
+                        <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100 flex-shrink-0">
+                          <img src={getImageUrl(item.product_image)} alt="" className="w-full h-full object-cover" onError={handleImageError} />
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs font-bold text-slate-700">{item.sku}</td>
+                      <td className="px-3 py-2 text-slate-800 text-xs max-w-[200px] truncate">{item.product_name}</td>
+                      <td className="px-3 py-2 text-center font-bold text-red-700">{item.qty}</td>
+                      <td className="px-3 py-2 text-right font-bold text-red-700">₴{(item.fee || 0).toLocaleString('uk-UA')}</td>
+                      <td className="px-3 py-2">
+                        {item.photo_url ? (
+                          <div className="w-10 h-10 rounded-lg overflow-hidden bg-slate-100 cursor-pointer border-2 border-red-200 hover:border-red-400 transition"
+                            onClick={() => openPhoto(item.photo_url, item.product_name)}>
+                            <img src={getImageUrl(item.photo_url)} alt="damage" className="w-full h-full object-cover" onError={handleImageError} />
+                          </div>
+                        ) : <span className="text-slate-400 text-xs">—</span>}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-600 max-w-[200px] truncate">{item.note || '—'}</td>
+                      <td className="px-3 py-2 text-xs text-slate-500">
+                        <div>{item.created_by || '—'}</div>
+                        <div>{fmtTime(item.created_at)}</div>
+                        <div className="text-[10px]">
+                          {item.source === 'return' || item.stage === 'return' ? (
+                            <span className="text-emerald-600 font-medium">Повернення {item.order_number ? `• ${item.order_number}` : ''}</span>
+                          ) : item.source === 'reaudit' || item.stage === 'reaudit' ? (
+                            <span className="text-blue-500">Переоблік</span>
+                          ) : item.order_number ? (
+                            <span className="text-slate-400">{item.order_number}</span>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          data-testid={`delete-written-off-${item.id}`}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                          title="Видалити запис"
+                          onClick={async () => {
+                            if (!window.confirm(`Видалити запис списання "${item.product_name}"?`)) return;
+                            try {
+                              const res = await authFetch(`${BACKEND_URL}/api/product-damage-history/${item.id}`, { method: 'DELETE' });
+                              if (res.ok) {
+                                setWrittenOffItems(prev => prev.filter(i => i.id !== item.id));
+                                setWrittenOffStats(prev => ({
+                                  total_items: prev.total_items - (item.qty || 1),
+                                  total_loss_amount: prev.total_loss_amount - (item.fee || 0)
+                                }));
+                              }
+                            } catch (e) { console.error('Delete error:', e); }
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {writtenOffItems.length === 0 && (
+                    <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400 text-sm">Немає списаних позицій</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Photo Modal */}

@@ -23,7 +23,7 @@ import {
 
 import {
   ZoneItemsPickup,
-  ZoneChecklist,
+  ZonePackaging,
   ZoneRequisitors,
 } from '../components/order-workspace/zones'
 // FinanceStatusCard тепер тільки в LeftRailFinance
@@ -160,7 +160,7 @@ export default function IssueCardWorkspace() {
         deposit: parseFloat(p.deposit || 0),
         serials: p.serials || [],
         scanned: p.scanned || [],
-        packaging: p.packaging || { cover: false, box: false, stretch: false, black_case: false },
+        packaging: p.packaging || {},
         location: { zone: p.location?.zone || '', state: p.location?.state || 'shelf' },
         pre_damage: p.pre_damage || [],
         damage_history: p.damage_history || [],
@@ -211,14 +211,6 @@ export default function IssueCardWorkspace() {
   // Обгортаємо в useCallback для синхронізації
   const loadIssueCardCallback = useCallback(loadIssueCard, [id])
 
-  // Синхронізація змін з іншими користувачами (polling fallback)
-  const { hasNewChanges, lastModifiedBy, markMyUpdate, dismissChanges } = useOrderSync(
-    order?.order_id,
-    loadIssueCardCallback,
-    10000, // перевірка кожні 10 секунд
-    !loading && !!order?.order_id
-  )
-  
   // WebSocket синхронізація (real-time)
   const {
     connected: wsConnected,
@@ -242,6 +234,15 @@ export default function IssueCardWorkspace() {
       })
     },
   })
+  
+  // ОПТИМІЗАЦІЯ P0.2: Синхронізація змін - вимкнено polling коли WS активний
+  const { hasNewChanges, lastModifiedBy, markMyUpdate, dismissChanges } = useOrderSync(
+    order?.order_id,
+    loadIssueCardCallback,
+    10000,
+    !loading && !!order?.order_id,
+    { wsConnected }  // Передаємо статус WS для вимкнення polling
+  )
   
   // Хук для повідомлення про збереження
   const { updateSection } = useOrderSectionUpdate()
@@ -526,17 +527,13 @@ setTimeout(()=>window.print(),500);
               email={clientEmail}
               tier="regular"
             />
-            <LeftRailFinance
-              orderId={order?.order_id}
-              rentAmount={totalRent}
-              depositAmount={totalDeposit}
-            />
             <LeftRailDocuments
               orderId={order?.order_id}
               orderNumber={order?.order_number}
               orderStatus={isIssued ? 'issued' : isReadyForIssue ? 'ready_for_issue' : 'processing'}
               issueCardId={issueCard?.id}
               customerEmail={clientEmail}
+              requisitorMode={true}
             />
             <LeftRailTimeline orderId={order?.order_id} events={timeline} />
           </>
@@ -569,20 +566,6 @@ setTimeout(()=>window.print(),500);
           readOnly={isIssued}
         />
         
-        {/* Дозамовлення - редагування позицій */}
-        {!isIssued && (
-          <OrderItemsModification
-            orderId={order?.order_id || order?.id}
-            orderStatus={issueCard?.status || 'processing'}
-            items={items}
-            onItemsChange={setItems}
-            onTotalsChange={(totals) => {
-              if (totals.total_price !== undefined) setTotalRent(totals.total_price)
-              if (totals.deposit_amount !== undefined) setTotalDeposit(totals.deposit_amount)
-            }}
-          />
-        )}
-        
         {/* Комплектування */}
         <ZoneItemsPickup
           items={items}
@@ -594,12 +577,9 @@ setTimeout(()=>window.print(),500);
           readOnly={isIssued}
         />
         
-        {/* Чеклист */}
-        <ZoneChecklist
-          items={checklist}
-          onToggle={handleChecklistToggle}
-          title="✅ Чеклист перед видачею"
-          hint="Обов'язкові пункти для завершення"
+        {/* Додаткове пакування */}
+        <ZonePackaging
+          orderId={order?.order_id || issueCard?.order_id}
           readOnly={isIssued}
         />
         

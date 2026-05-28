@@ -1,16 +1,69 @@
 /* eslint-disable */
 // Каталог товарів - гнучкий інструмент перегляду для менеджера
-// Вкладки: Товари | Набори
+// Вкладки: Товари | Набори | Сети
 // Sidebar зліва: дати, категорії, фільтри | Справа: товари
 
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { getImageUrl, handleImageError } from '../utils/imageHelper'
 import CorporateHeader from '../components/CorporateHeader'
+import FamiliesManager from '../components/catalog/FamiliesManager'
+import { Filter, X, ChevronDown, ChevronUp } from 'lucide-react'
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || ''
 
 // Utility functions
 const cls = (...a) => a.filter(Boolean).join(' ')
+
+/* ─── Multi-select pill filter for colors/materials ─── */
+function CatalogMultiSelect({ selected, options, onChange, placeholder, testId }) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const filtered = options.filter(o => o.toLowerCase().includes(search.toLowerCase()) && !selected.includes(o))
+  const toggle = (v) => {
+    if (selected.includes(v)) onChange(selected.filter(s => s !== v))
+    else onChange([...selected, v])
+  }
+
+  return (
+    <div ref={ref} className="relative" data-testid={testId}>
+      <div onClick={() => setOpen(!open)}
+        className="w-full min-h-[36px] flex flex-wrap gap-1 items-center rounded-lg border border-corp-border px-2 py-1.5 cursor-pointer hover:border-corp-primary/50 transition">
+        {selected.length === 0 && <span className="text-sm text-corp-text-muted">{placeholder}</span>}
+        {selected.map(s => (
+          <span key={s} className="flex items-center gap-1 bg-corp-primary/10 text-corp-primary rounded-full px-2 py-0.5 text-[10px] font-medium">
+            {s}
+            <button type="button" onClick={(e) => { e.stopPropagation(); toggle(s) }} className="hover:text-rose-600">&times;</button>
+          </span>
+        ))}
+      </div>
+      {open && (
+        <div className="absolute z-20 top-full left-0 right-0 mt-1 bg-white rounded-lg border border-corp-border shadow-lg max-h-48 overflow-hidden flex flex-col">
+          <div className="p-2 border-b border-corp-border">
+            <input value={search} onChange={e => setSearch(e.target.value)} autoFocus
+              placeholder="Пошук..." className="w-full text-sm px-2 py-1 rounded border border-corp-border focus:outline-none" />
+          </div>
+          <div className="overflow-y-auto flex-1">
+            {filtered.length === 0 && <div className="px-3 py-2 text-xs text-corp-text-muted">Нічого не знайдено</div>}
+            {filtered.map(o => (
+              <button key={o} type="button" onClick={() => toggle(o)}
+                className="w-full text-left px-3 py-1.5 text-sm hover:bg-corp-bg-light transition">
+                {o}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 const fmtUA = (n) => (Number(n) || 0).toLocaleString('uk-UA', { maximumFractionDigits: 0 })
 
 // Badge component
@@ -326,140 +379,6 @@ function FamilyModal({ family, products, onClose, onSave }) {
   )
 }
 
-// Families Tab Content
-function FamiliesTab({ products }) {
-  const [families, setFamilies] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [editingFamily, setEditingFamily] = useState(null)
-  const [showModal, setShowModal] = useState(false)
-  
-  useEffect(() => {
-    loadFamilies()
-  }, [])
-  
-  const loadFamilies = async () => {
-    try {
-      setLoading(true)
-      const res = await fetch(`${BACKEND_URL}/api/catalog/families`)
-      const data = await res.json()
-      // API returns array directly or {families: [...]}
-      setFamilies(Array.isArray(data) ? data : data.families || [])
-    } catch (err) {
-      console.error('Error loading families:', err)
-    } finally {
-      setLoading(false)
-    }
-  }
-  
-  const handleSave = async (familyData) => {
-    if (familyData.id) {
-      // Update existing - first update info, then reassign products
-      await fetch(`${BACKEND_URL}/api/catalog/families/${familyData.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: familyData.name, description: familyData.description })
-      })
-      // Reassign products
-      await fetch(`${BACKEND_URL}/api/catalog/families/${familyData.id}/assign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ product_ids: familyData.product_ids })
-      })
-    } else {
-      // Create new
-      const res = await fetch(`${BACKEND_URL}/api/catalog/families`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: familyData.name, description: familyData.description })
-      })
-      const data = await res.json()
-      // Assign products
-      if (data.family_id) {
-        await fetch(`${BACKEND_URL}/api/catalog/families/${data.family_id}/assign`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ product_ids: familyData.product_ids })
-        })
-      }
-    }
-    await loadFamilies()
-  }
-  
-  const handleDelete = async (familyId) => {
-    if (!confirm('Видалити набір? Товари залишаться, але не будуть пов\'язані.')) return
-    
-    // Remove all products from family first
-    const family = families.find(f => f.id === familyId)
-    if (family) {
-      for (const p of family.products) {
-        await fetch(`${BACKEND_URL}/api/catalog/products/${p.product_id}/remove-family`, { method: 'POST' })
-      }
-    }
-    await loadFamilies()
-  }
-  
-  const openCreate = () => {
-    setEditingFamily(null)
-    setShowModal(true)
-  }
-  
-  const openEdit = (family) => {
-    setEditingFamily(family)
-    setShowModal(true)
-  }
-  
-  return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-corp-text-dark">Набори (варіанти товарів)</h2>
-          <p className="text-sm text-corp-text-muted">Зв'язуйте схожі товари: розміри, кольори одного товару</p>
-        </div>
-        <button 
-          onClick={openCreate}
-          className="px-4 py-2 bg-corp-primary text-white rounded-lg hover:bg-corp-primary/90 font-medium"
-        >
-          + Новий набір
-        </button>
-      </div>
-      
-      {/* Families list */}
-      {loading ? (
-        <div className="text-center py-12 text-corp-text-muted">Завантаження...</div>
-      ) : families.length === 0 ? (
-        <div className="bg-white rounded-xl border border-corp-border p-12 text-center">
-          <div className="text-4xl mb-4">🔗</div>
-          <div className="text-corp-text-muted mb-4">Наборів ще немає</div>
-          <p className="text-sm text-corp-text-muted mb-4">
-            Створіть набір щоб зв'язати схожі товари<br/>
-            (наприклад: Свічник 17см, 20см, 23см)
-          </p>
-          <button onClick={openCreate} className="text-corp-primary hover:underline">
-            Створити перший набір
-          </button>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {families.map(family => (
-            <FamilyCard key={family.id} family={family} onEdit={openEdit} onDelete={handleDelete} />
-          ))}
-        </div>
-      )}
-      
-      {/* Modal */}
-      {showModal && (
-        <FamilyModal
-          family={editingFamily}
-          products={products}
-          onClose={() => setShowModal(false)}
-          onSave={handleSave}
-        />
-      )}
-    </div>
-  )
-}
-
 // ============================================
 // SETS TAB (Сети - комплекти товарів)
 // ============================================
@@ -666,7 +585,7 @@ function SetModal({ set, products, onClose, onSave }) {
                     <span className="flex-1 text-sm truncate">{item.name}</span>
                     <div className="flex items-center gap-1">
                       <button onClick={() => updateQty(item.product_id, item.quantity - 1)} className="w-6 h-6 rounded bg-white border hover:bg-corp-bg-page">-</button>
-                      <span className="w-8 text-center text-sm">{item.quantity}</span>
+                      <input type="number" min="1" value={item.quantity} onChange={e => updateQty(item.product_id, Math.max(1, parseInt(e.target.value) || 1))} className="w-10 text-center text-sm border border-corp-border rounded bg-transparent [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                       <button onClick={() => updateQty(item.product_id, item.quantity + 1)} className="w-6 h-6 rounded bg-white border hover:bg-corp-bg-page">+</button>
                     </div>
                     <span className="text-sm text-corp-primary w-20 text-right">{fmtUA(item.rental_price * item.quantity)} ₴</span>
@@ -841,7 +760,7 @@ function CreateSetFromSelectionModal({ selectedProducts, onClose, onSave }) {
                     >
                       −
                     </button>
-                    <span className="w-8 text-center font-medium">{item.quantity}</span>
+                    <input type="number" min="1" value={item.quantity} onChange={e => updateQty(item.product_id, Math.max(1, parseInt(e.target.value) || 1))} className="w-10 text-center font-medium border border-corp-border rounded-lg bg-transparent [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" />
                     <button 
                       onClick={() => updateQty(item.product_id, item.quantity + 1)}
                       className="w-7 h-7 rounded-lg border border-corp-border hover:bg-corp-bg-light flex items-center justify-center text-sm"
@@ -1167,7 +1086,9 @@ function Sidebar({
   dateRange,
   setDateRange,
   onResetAll,
-  loading 
+  loading,
+  isMobileOpen,
+  onMobileClose
 }) {
   // Get subcategories for selected category
   const subcategories = selectedCategory.category 
@@ -1176,92 +1097,170 @@ function Sidebar({
   
   const totalProducts = categories.reduce((sum, c) => sum + c.product_count, 0)
   
+  // Mobile collapsed sections
+  const [expandedSections, setExpandedSections] = useState({
+    dates: true,
+    category: true,
+    filters: false
+  })
+  
+  const toggleSection = (section) => {
+    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }))
+  }
+  
   return (
-    <aside className="w-72 flex-shrink-0 space-y-4">
-      {/* Date Range */}
-      <div className="bg-gradient-to-br from-sky-50 to-indigo-50 rounded-xl border border-sky-200 p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-lg">📅</span>
-          <h3 className="font-semibold text-corp-text-dark text-sm">Перевірка доступності</h3>
-        </div>
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-corp-text-muted font-medium block mb-1">Дата початку</label>
-            <input
-              type="date"
-              value={dateRange.dateFrom}
-              onChange={(e) => setDateRange({ ...dateRange, dateFrom: e.target.value })}
-              className="w-full rounded-lg border border-sky-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 bg-white"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-corp-text-muted font-medium block mb-1">Дата закінчення</label>
-            <input
-              type="date"
-              value={dateRange.dateTo}
-              onChange={(e) => setDateRange({ ...dateRange, dateTo: e.target.value })}
-              min={dateRange.dateFrom}
-              className="w-full rounded-lg border border-sky-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 bg-white"
-            />
-          </div>
-          {dateRange.dateFrom && dateRange.dateTo && (
-            <div className="text-xs text-sky-700 bg-sky-100 rounded-lg px-3 py-2">
-              Період: {dateRange.dateFrom} — {dateRange.dateTo}
-            </div>
-          )}
-        </div>
-      </div>
+    <>
+      {/* Mobile overlay */}
+      {isMobileOpen && (
+        <div 
+          className="lg:hidden fixed inset-0 bg-black/50 z-40"
+          onClick={onMobileClose}
+        />
+      )}
       
-      {/* Categories */}
-      <div className="bg-white rounded-xl border border-corp-border p-4">
-        <h3 className="font-semibold text-corp-text-dark text-sm mb-3">Категорія</h3>
-        <div className="space-y-3">
-          <select
-            value={selectedCategory.category || ''}
-            onChange={(e) => onSelectCategory({ category: e.target.value || null, subcategory: null })}
-            disabled={loading}
-            className="w-full rounded-lg border border-corp-border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-corp-primary/30 focus:border-corp-primary bg-white"
+      <aside className={cls(
+        "flex-shrink-0 space-y-3 lg:space-y-4 transition-all duration-300 z-50",
+        // Desktop: fixed width sidebar
+        "lg:w-72 lg:relative lg:translate-x-0",
+        // Mobile: slide-out panel
+        "fixed inset-y-0 left-0 w-[85%] max-w-[320px] bg-slate-50 lg:bg-transparent",
+        "overflow-y-auto p-4 lg:p-0",
+        isMobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+      )}>
+        {/* Mobile header */}
+        <div className="lg:hidden flex items-center justify-between mb-4 pb-3 border-b border-slate-200">
+          <h2 className="font-semibold text-slate-800">Фільтри</h2>
+          <button 
+            onClick={onMobileClose}
+            className="p-2 hover:bg-slate-200 rounded-lg"
           >
-            <option value="">Всі категорії ({totalProducts})</option>
-            {categories.map(cat => (
-              <option key={cat.name} value={cat.name}>
-                {cat.name} ({cat.product_count})
-              </option>
-            ))}
-          </select>
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        {/* Date Range - collapsible on mobile */}
+        <div className="bg-gradient-to-br from-sky-50 to-indigo-50 rounded-xl border border-sky-200 overflow-hidden">
+          <button 
+            onClick={() => toggleSection('dates')}
+            className="w-full flex items-center justify-between p-3 lg:p-4"
+          >
+            <div className="flex items-center gap-2">
+              <span className="text-lg">📅</span>
+              <h3 className="font-semibold text-corp-text-dark text-sm">Перевірка доступності</h3>
+            </div>
+            <ChevronDown className={cls(
+              "w-4 h-4 text-slate-500 transition-transform lg:hidden",
+              expandedSections.dates && "rotate-180"
+            )} />
+          </button>
           
-          <div>
-            <label className="text-xs text-corp-text-muted font-medium block mb-1">Підкатегорія</label>
+          <div className={cls(
+            "px-3 lg:px-4 pb-3 lg:pb-4 space-y-3",
+            !expandedSections.dates && "hidden lg:block"
+          )}>
+            <div>
+              <label className="text-xs text-corp-text-muted font-medium block mb-1">Дата початку</label>
+              <input
+                type="date"
+                value={dateRange.dateFrom}
+                onChange={(e) => setDateRange({ ...dateRange, dateFrom: e.target.value })}
+                className="w-full rounded-lg border border-sky-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 bg-white"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-corp-text-muted font-medium block mb-1">Дата закінчення</label>
+              <input
+                type="date"
+                value={dateRange.dateTo}
+                onChange={(e) => setDateRange({ ...dateRange, dateTo: e.target.value })}
+                min={dateRange.dateFrom}
+                className="w-full rounded-lg border border-sky-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/30 focus:border-sky-500 bg-white"
+              />
+            </div>
+            {dateRange.dateFrom && dateRange.dateTo && (
+              <div className="text-xs text-sky-700 bg-sky-100 rounded-lg px-3 py-2">
+                Період: {dateRange.dateFrom} — {dateRange.dateTo}
+              </div>
+            )}
+          </div>
+        </div>
+        
+        {/* Categories - collapsible on mobile */}
+        <div className="bg-white rounded-xl border border-corp-border overflow-hidden">
+          <button 
+            onClick={() => toggleSection('category')}
+            className="w-full flex items-center justify-between p-3 lg:p-4"
+          >
+            <h3 className="font-semibold text-corp-text-dark text-sm">Категорія</h3>
+            <ChevronDown className={cls(
+              "w-4 h-4 text-slate-500 transition-transform lg:hidden",
+              expandedSections.category && "rotate-180"
+            )} />
+          </button>
+          
+          <div className={cls(
+            "px-3 lg:px-4 pb-3 lg:pb-4 space-y-3",
+            !expandedSections.category && "hidden lg:block"
+          )}>
             <select
-              value={selectedCategory.subcategory || ''}
-              onChange={(e) => onSelectCategory({ ...selectedCategory, subcategory: e.target.value || null })}
-              disabled={!selectedCategory.category || loading}
-              className={cls(
-                "w-full rounded-lg border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-corp-primary/30 bg-white",
-                !selectedCategory.category 
-                  ? "border-corp-border/50 text-corp-text-muted" 
-                  : "border-corp-border focus:border-corp-primary"
-              )}
+              value={selectedCategory.category || ''}
+              onChange={(e) => onSelectCategory({ category: e.target.value || null, subcategory: null })}
+              disabled={loading}
+              className="w-full rounded-lg border border-corp-border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-corp-primary/30 focus:border-corp-primary bg-white"
             >
-              <option value="">
-                {selectedCategory.category 
-                  ? `Всі (${subcategories.reduce((s, sub) => s + sub.product_count, 0)})` 
-                  : 'Оберіть категорію'}
-              </option>
-              {subcategories.map(sub => (
-                <option key={sub.name} value={sub.name}>
-                  {sub.name} ({sub.product_count})
+              <option value="">Всі категорії ({totalProducts})</option>
+              {categories.map(cat => (
+                <option key={cat.name} value={cat.name}>
+                  {cat.name} ({cat.product_count})
                 </option>
               ))}
             </select>
+            
+            <div>
+              <label className="text-xs text-corp-text-muted font-medium block mb-1">Підкатегорія</label>
+              <select
+                value={selectedCategory.subcategory || ''}
+                onChange={(e) => onSelectCategory({ ...selectedCategory, subcategory: e.target.value || null })}
+                disabled={!selectedCategory.category || loading}
+                className={cls(
+                  "w-full rounded-lg border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-corp-primary/30 bg-white",
+                  !selectedCategory.category 
+                    ? "border-corp-border/50 text-corp-text-muted" 
+                    : "border-corp-border focus:border-corp-primary"
+                )}
+              >
+                <option value="">
+                  {selectedCategory.category 
+                    ? `Всі (${subcategories.reduce((s, sub) => s + sub.product_count, 0)})` 
+                    : 'Оберіть категорію'}
+                </option>
+                {subcategories.map(sub => (
+                  <option key={sub.name} value={sub.name}>
+                    {sub.name} ({sub.product_count})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
-      </div>
-      
-      {/* Filters */}
-      <div className="bg-white rounded-xl border border-corp-border p-4">
-        <h3 className="font-semibold text-corp-text-dark text-sm mb-3">Фільтри</h3>
-        <div className="space-y-3">
+        
+        {/* Filters - collapsed by default on mobile */}
+        <div className="bg-white rounded-xl border border-corp-border overflow-hidden">
+          <button 
+            onClick={() => toggleSection('filters')}
+            className="w-full flex items-center justify-between p-3 lg:p-4"
+          >
+            <h3 className="font-semibold text-corp-text-dark text-sm">Фільтри</h3>
+            <ChevronDown className={cls(
+              "w-4 h-4 text-slate-500 transition-transform lg:hidden",
+              expandedSections.filters && "rotate-180"
+            )} />
+          </button>
+          
+          <div className={cls(
+            "px-3 lg:px-4 pb-3 lg:pb-4 space-y-3",
+            !expandedSections.filters && "hidden lg:block"
+          )}>
           {/* Search */}
           <div>
             <label className="text-xs text-corp-text-muted font-medium block mb-1">Пошук</label>
@@ -1274,34 +1273,28 @@ function Sidebar({
             />
           </div>
           
-          {/* Color */}
+          {/* Color - multi-select pills */}
           <div>
             <label className="text-xs text-corp-text-muted font-medium block mb-1">Колір</label>
-            <select
-              value={filters.color}
-              onChange={(e) => setFilters({ ...filters, color: e.target.value })}
-              className="w-full rounded-lg border border-corp-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-corp-primary/30"
-            >
-              <option value="">Всі кольори</option>
-              {colors.map(c => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
+            <CatalogMultiSelect
+              selected={filters.color ? filters.color.split(',').map(s => s.trim()).filter(Boolean) : []}
+              options={colors}
+              onChange={(arr) => setFilters({ ...filters, color: arr.join(',') })}
+              placeholder="Обрати кольори..."
+              testId="catalog-color-filter"
+            />
           </div>
           
-          {/* Material */}
+          {/* Material - multi-select pills */}
           <div>
             <label className="text-xs text-corp-text-muted font-medium block mb-1">Матеріал</label>
-            <select
-              value={filters.material}
-              onChange={(e) => setFilters({ ...filters, material: e.target.value })}
-              className="w-full rounded-lg border border-corp-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-corp-primary/30"
-            >
-              <option value="">Всі матеріали</option>
-              {materials.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
+            <CatalogMultiSelect
+              selected={filters.material ? filters.material.split(',').map(s => s.trim()).filter(Boolean) : []}
+              options={materials}
+              onChange={(arr) => setFilters({ ...filters, material: arr.join(',') })}
+              placeholder="Обрати матеріали..."
+              testId="catalog-material-filter"
+            />
           </div>
           
           {/* Quantity */}
@@ -1341,7 +1334,7 @@ function Sidebar({
               <option value="reserved">Резерв (очікують)</option>
               <option value="on_wash">На мийці</option>
               <option value="on_restoration">На реставрації</option>
-              <option value="on_laundry">В хімчистці</option>
+              <option value="on_laundry">В пральні</option>
             </select>
           </div>
         </div>
@@ -1349,12 +1342,24 @@ function Sidebar({
       
       {/* Reset button */}
       <button
-        onClick={onResetAll}
+        onClick={() => {
+          onResetAll()
+          onMobileClose?.()
+        }}
         className="w-full py-2.5 text-sm text-corp-text-muted hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-corp-border transition-colors"
       >
         Скинути все
       </button>
+      
+      {/* Mobile Apply button */}
+      <button
+        onClick={onMobileClose}
+        className="lg:hidden w-full py-3 bg-corp-primary text-white font-medium rounded-lg hover:bg-corp-primary/90"
+      >
+        Застосувати
+      </button>
     </aside>
+    </>
   )
 }
 
@@ -1382,7 +1387,7 @@ function ProductCard({ item, onClick, dateFilterActive, selectionMode, isSelecte
     <div 
       onClick={handleClick}
       className={cls(
-        'bg-white rounded-xl border p-3 hover:shadow-md transition-all cursor-pointer group relative',
+        'bg-white rounded-xl border p-2 lg:p-3 hover:shadow-md transition-all cursor-pointer group relative',
         hasConflict ? 'border-rose-300 bg-rose-50/30' : 
         isSelected ? 'border-corp-primary border-2 bg-corp-primary/5 ring-2 ring-corp-primary/20' : 
         'border-corp-border'
@@ -1404,12 +1409,13 @@ function ProductCard({ item, onClick, dateFilterActive, selectionMode, isSelecte
       )}
       
       {/* Image */}
-      <div className="relative mb-3">
+      <div className="relative mb-2 lg:mb-3">
         <img
-          src={getImageUrl(item.image)}
+          src={getImageUrl(item.image, 'thumb')}
           alt={item.name}
+          loading="lazy"
           className={cls(
-            "w-full h-28 object-cover rounded-lg bg-corp-bg-light",
+            "w-full h-24 lg:h-28 object-cover rounded-lg bg-corp-bg-light",
             selectionMode && "pl-0"
           )}
           onError={handleImageError}
@@ -1432,18 +1438,22 @@ function ProductCard({ item, onClick, dateFilterActive, selectionMode, isSelecte
             <Badge variant="default">{item.on_restoration} рест.</Badge>
           )}
           {item.on_laundry > 0 && (
-            <Badge variant="default">{item.on_laundry} хім.</Badge>
-          )}
-          {item.family_id && (
-            <Badge variant="primary">📏 Набір</Badge>
+            <Badge variant="default">{item.on_laundry} прал.</Badge>
           )}
         </div>
       </div>
       
       {/* Info */}
-      <div className="space-y-1">
-        <div className="text-xs text-corp-text-muted">{item.sku}</div>
-        <div className="font-medium text-corp-text-dark text-sm line-clamp-2 group-hover:text-corp-primary transition-colors min-h-[40px]">
+      <div className="space-y-0.5 lg:space-y-1">
+        <div className="flex items-center justify-between gap-1">
+          <div className="text-[10px] lg:text-xs text-corp-text-muted">{item.sku}</div>
+          {item.family_id !== null && item.family_id !== undefined && (
+            <div className="text-[10px] lg:text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+              сет #{item.family_id}
+            </div>
+          )}
+        </div>
+        <div className="font-medium text-corp-text-dark text-xs lg:text-sm line-clamp-2 group-hover:text-corp-primary transition-colors min-h-[32px] lg:min-h-[40px]">
           {item.name}
         </div>
         
@@ -1501,8 +1511,8 @@ function ProductCard({ item, onClick, dateFilterActive, selectionMode, isSelecte
         {hasProcessing && !hasRentals && (
           <div className="text-xs rounded px-2 py-1.5 mt-1 bg-cyan-50 text-cyan-700 border border-cyan-200">
             {item.on_wash > 0 && <span>🧹 На мийці: {item.on_wash}</span>}
-            {item.on_restoration > 0 && <span>{item.on_wash > 0 ? ' · ' : ''}🔧 Ремонт: {item.on_restoration}</span>}
-            {item.on_laundry > 0 && <span>{(item.on_wash > 0 || item.on_restoration > 0) ? ' · ' : ''}👕 Хімчистка: {item.on_laundry}</span>}
+            {item.on_restoration > 0 && <span>{item.on_wash > 0 ? ' · ' : ''}🔧 Реставрація: {item.on_restoration}</span>}
+            {item.on_laundry > 0 && <span>{(item.on_wash > 0 || item.on_restoration > 0) ? ' · ' : ''}👕 Пральня: {item.on_laundry}</span>}
           </div>
         )}
       </div>
@@ -1611,7 +1621,7 @@ function ProductDetailModal({ item, onClose, dateFilterActive }) {
                       )}
                       {item.on_laundry > 0 && (
                         <span className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-1 rounded-lg">
-                          Хімчистка: {item.on_laundry}
+                          Пральня: {item.on_laundry}
                         </span>
                       )}
                     </div>
@@ -1745,6 +1755,9 @@ export default function CatalogBoard() {
   const [dateFilterActive, setDateFilterActive] = useState(false)
   const [selectedItem, setSelectedItem] = useState(null)
   
+  // Mobile sidebar state
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  
   // === МУЛЬТИВИБІР ДЛЯ СТВОРЕННЯ НАБОРІВ ===
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectionTarget, setSelectionTarget] = useState('set') // 'set' | 'family'
@@ -1863,7 +1876,7 @@ export default function CatalogBoard() {
 
   return (
     <div className="min-h-screen bg-corp-bg-page font-montserrat">
-      <CorporateHeader cabinetName="Каталог" />
+      <CorporateHeader cabinetName="Каталог" showBackButton />
       
       {/* Tabs */}
       <div className="bg-white border-b border-corp-border">
@@ -1906,9 +1919,18 @@ export default function CatalogBoard() {
         </div>
       </div>
       
-      <div className="max-w-[1800px] mx-auto px-4 py-4">
+      <div className="max-w-[1800px] mx-auto px-3 lg:px-4 py-3 lg:py-4">
         {activeTab === 'products' ? (
           <div className="flex gap-4">
+            {/* Mobile Filter Button - only on mobile */}
+            <button
+              onClick={() => setMobileSidebarOpen(true)}
+              className="lg:hidden fixed bottom-4 right-4 z-30 flex items-center gap-2 px-4 py-3 bg-corp-primary text-white rounded-full shadow-lg hover:bg-corp-primary/90"
+            >
+              <Filter className="w-5 h-5" />
+              <span className="font-medium">Фільтри</span>
+            </button>
+            
             {/* Left Sidebar */}
             <Sidebar
               categories={categories}
@@ -1922,50 +1944,53 @@ export default function CatalogBoard() {
               setDateRange={setDateRange}
               onResetAll={resetAll}
               loading={categoriesLoading}
+              isMobileOpen={mobileSidebarOpen}
+              onMobileClose={() => setMobileSidebarOpen(false)}
             />
             
             {/* Right Content */}
-            <main className="flex-1 space-y-4">
-              {/* Stats bar */}
-              <div className="bg-white rounded-xl border border-corp-border p-4">
-                <div className="flex flex-wrap items-center gap-4">
-                  <div className="min-w-[60px]">
-                    <div className="text-xl font-bold text-corp-text-dark">{items.length}</div>
-                    <div className="text-xs text-corp-text-muted">Знайдено</div>
+            <main className="flex-1 space-y-3 lg:space-y-4 w-full lg:w-auto">
+              {/* Stats bar - mobile optimized */}
+              <div className="bg-white rounded-xl border border-corp-border p-3 lg:p-4">
+                {/* Mobile: horizontal scroll for stats */}
+                <div className="flex items-center gap-3 lg:gap-4 overflow-x-auto pb-2 lg:pb-0 -mx-1 px-1">
+                  <div className="min-w-[50px] lg:min-w-[60px] flex-shrink-0">
+                    <div className="text-lg lg:text-xl font-bold text-corp-text-dark">{items.length}</div>
+                    <div className="text-[10px] lg:text-xs text-corp-text-muted">Знайдено</div>
                   </div>
-                  <div className="border-l border-corp-border pl-4 min-w-[70px]">
-                    <div className="text-xl font-bold text-emerald-600">{fmtUA(stats.available)}</div>
-                    <div className="text-xs text-corp-text-muted">Доступно</div>
+                  <div className="border-l border-corp-border pl-3 lg:pl-4 min-w-[55px] lg:min-w-[70px] flex-shrink-0">
+                    <div className="text-lg lg:text-xl font-bold text-emerald-600">{fmtUA(stats.available)}</div>
+                    <div className="text-[10px] lg:text-xs text-corp-text-muted">Доступно</div>
                   </div>
-                  <div className="border-l border-corp-border pl-4 min-w-[60px]">
-                    <div className="text-xl font-bold text-amber-600">{fmtUA(stats.in_rent)}</div>
-                    <div className="text-xs text-corp-text-muted">Видано</div>
+                  <div className="border-l border-corp-border pl-3 lg:pl-4 min-w-[50px] lg:min-w-[60px] flex-shrink-0">
+                    <div className="text-lg lg:text-xl font-bold text-amber-600">{fmtUA(stats.in_rent)}</div>
+                    <div className="text-[10px] lg:text-xs text-corp-text-muted">Видано</div>
                   </div>
-                  <div className="border-l border-corp-border pl-4 min-w-[60px]">
-                    <div className="text-xl font-bold text-sky-600">{fmtUA(stats.reserved)}</div>
-                    <div className="text-xs text-corp-text-muted">Резерв</div>
+                  <div className="border-l border-corp-border pl-3 lg:pl-4 min-w-[45px] lg:min-w-[60px] flex-shrink-0">
+                    <div className="text-lg lg:text-xl font-bold text-sky-600">{fmtUA(stats.reserved)}</div>
+                    <div className="text-[10px] lg:text-xs text-corp-text-muted">Резерв</div>
                   </div>
-                  <div className="border-l border-corp-border pl-4 min-w-[60px]">
-                    <div className="text-xl font-bold text-blue-500">{fmtUA(stats.on_wash)}</div>
-                    <div className="text-xs text-corp-text-muted">Мийка</div>
+                  <div className="hidden sm:block border-l border-corp-border pl-3 lg:pl-4 min-w-[50px] lg:min-w-[60px] flex-shrink-0">
+                    <div className="text-lg lg:text-xl font-bold text-blue-500">{fmtUA(stats.on_wash)}</div>
+                    <div className="text-[10px] lg:text-xs text-corp-text-muted">Мийка</div>
                   </div>
-                  <div className="border-l border-corp-border pl-4 min-w-[70px]">
-                    <div className="text-xl font-bold text-purple-600">{fmtUA(stats.on_restoration)}</div>
-                    <div className="text-xs text-corp-text-muted">Реставрація</div>
+                  <div className="hidden md:block border-l border-corp-border pl-3 lg:pl-4 min-w-[55px] lg:min-w-[70px] flex-shrink-0">
+                    <div className="text-lg lg:text-xl font-bold text-purple-600">{fmtUA(stats.on_restoration)}</div>
+                    <div className="text-[10px] lg:text-xs text-corp-text-muted">Реставрація</div>
                   </div>
-                  <div className="border-l border-corp-border pl-4 min-w-[70px]">
-                    <div className="text-xl font-bold text-indigo-600">{fmtUA(stats.on_laundry)}</div>
-                    <div className="text-xs text-corp-text-muted">Хімчистка</div>
+                  <div className="hidden md:block border-l border-corp-border pl-3 lg:pl-4 min-w-[60px] lg:min-w-[70px] flex-shrink-0">
+                    <div className="text-lg lg:text-xl font-bold text-indigo-600">{fmtUA(stats.on_laundry)}</div>
+                    <div className="text-[10px] lg:text-xs text-corp-text-muted">Пральня</div>
                   </div>
                   {conflictCount > 0 && (
-                    <div className="border-l border-corp-border pl-4">
-                      <div className="text-xl font-bold text-rose-600">{conflictCount}</div>
-                      <div className="text-xs text-corp-text-muted">Конфліктів</div>
+                    <div className="border-l border-corp-border pl-3 lg:pl-4 flex-shrink-0">
+                      <div className="text-lg lg:text-xl font-bold text-rose-600">{conflictCount}</div>
+                      <div className="text-[10px] lg:text-xs text-corp-text-muted">Конфліктів</div>
                     </div>
                   )}
                   
-                  {/* Кнопки режиму вибору */}
-                  <div className="ml-auto flex items-center gap-2">
+                  {/* Кнопки режиму вибору - hide on small mobile, show on larger */}
+                  <div className="hidden sm:flex ml-auto items-center gap-2 flex-shrink-0">
                     {dateFilterActive && (
                       <Badge variant="info">Фільтр по датах</Badge>
                     )}
@@ -1973,25 +1998,25 @@ export default function CatalogBoard() {
                     {selectionMode ? (
                       <button
                         onClick={clearSelection}
-                        className="px-4 py-2 rounded-lg font-medium text-sm bg-rose-100 text-rose-700 hover:bg-rose-200 flex items-center gap-2"
+                        className="px-3 py-1.5 rounded-lg font-medium text-xs lg:text-sm bg-rose-100 text-rose-700 hover:bg-rose-200 flex items-center gap-1"
                       >
-                        ✕ Скасувати вибір
+                        ✕ Скасувати
                       </button>
                     ) : (
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => startSelectionMode('set')}
-                          className="px-4 py-2 rounded-lg font-medium text-sm bg-corp-primary/10 text-corp-primary hover:bg-corp-primary/20 flex items-center gap-2"
+                          className="px-3 py-1.5 rounded-lg font-medium text-xs lg:text-sm bg-corp-primary/10 text-corp-primary hover:bg-corp-primary/20 flex items-center gap-1"
                           title="Створити сет для оренди (комплект товарів)"
                         >
-                          🎁 Зібрати сет
+                          🎁 <span className="hidden lg:inline">Зібрати</span> сет
                         </button>
                         <button
                           onClick={() => startSelectionMode('family')}
-                          className="px-4 py-2 rounded-lg font-medium text-sm bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-2"
+                          className="px-3 py-1.5 rounded-lg font-medium text-xs lg:text-sm bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"
                           title="Об'єднати схожі товари (розмірна сітка)"
                         >
-                          📏 Зібрати набір
+                          📏 <span className="hidden lg:inline">Зібрати</span> набір
                         </button>
                       </div>
                     )}
@@ -2001,25 +2026,25 @@ export default function CatalogBoard() {
                 {/* Підказка про режим вибору */}
                 {selectionMode && (
                   <div className="mt-3 pt-3 border-t border-corp-border">
-                    <div className="flex items-center gap-2 text-sm">
+                    <div className="flex items-center gap-2 text-xs lg:text-sm">
                       <span>👆</span>
                       {selectionTarget === 'set' ? (
-                        <span className="text-corp-primary">Вибирайте товари для <strong>сету</strong> (комплект для оренди разом)</span>
+                        <span className="text-corp-primary">Вибирайте товари для <strong>сету</strong></span>
                       ) : (
-                        <span className="text-amber-700">Вибирайте товари для <strong>набору</strong> (розмірна сітка / варіації)</span>
+                        <span className="text-amber-700">Вибирайте товари для <strong>набору</strong></span>
                       )}
                     </div>
                   </div>
                 )}
               </div>
               
-              {/* Product grid */}
+              {/* Product grid - more columns on mobile */}
               {loading ? (
-                <div className="bg-white rounded-xl border border-corp-border p-12 text-center">
+                <div className="bg-white rounded-xl border border-corp-border p-8 lg:p-12 text-center">
                   <div className="text-corp-text-muted">Завантаження...</div>
                 </div>
               ) : items.length === 0 ? (
-                <div className="bg-white rounded-xl border border-corp-border p-12 text-center">
+                <div className="bg-white rounded-xl border border-corp-border p-8 lg:p-12 text-center">
                   <div className="text-4xl mb-4">📦</div>
                   <div className="text-corp-text-muted mb-4">Товарів не знайдено</div>
                   <button onClick={resetAll} className="text-corp-primary hover:underline text-sm">
@@ -2027,7 +2052,7 @@ export default function CatalogBoard() {
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 lg:gap-3">
                   {items.map(item => (
                     <ProductCard
                       key={item.product_id}
@@ -2044,7 +2069,9 @@ export default function CatalogBoard() {
             </main>
           </div>
         ) : activeTab === 'families' ? (
-          <FamiliesTab products={allProducts} />
+          <div className="h-[calc(100vh-130px)]">
+            <FamiliesManager />
+          </div>
         ) : (
           <SetsTab products={allProducts} />
         )}

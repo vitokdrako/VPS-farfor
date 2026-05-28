@@ -64,7 +64,8 @@ export default function DamageModal({
   order, // { order_id, order_number }
   stage, // 'pre_issue', 'return', 'audit'
   onSave, // Callback after saving
-  existingHistory = [] // Optional: existing damage history to display
+  existingHistory = [], // Optional: existing damage history to display
+  versionId = null // Optional: ID часткового повернення
 }) {
   const [formData, setFormData] = useState({
     category: 'Меблі',
@@ -73,7 +74,8 @@ export default function DamageModal({
     note: '',
     fee: 0,
     qty: 1,
-    photoName: ''
+    photoName: '',
+    sendTo: 'none'  // 'none' | 'wash' | 'restore' | 'laundry'
   })
   
   const [photos, setPhotos] = useState([])
@@ -133,6 +135,9 @@ export default function DamageModal({
         item?.name
       )
       
+      // Отримуємо кількість товару (з замовлення або за замовчуванням 1)
+      const itemQty = item?.quantity || item?.qty || 1
+      
       // Reset form when opening
       setFormData({
         category: autoCategory,
@@ -140,7 +145,7 @@ export default function DamageModal({
         severity: 'low',
         note: '',
         fee: 0,
-        qty: 1,
+        qty: itemQty,  // Автоматично встановлюємо кількість з товару
         photoName: ''
       })
       setPhotos([])
@@ -172,12 +177,12 @@ export default function DamageModal({
   }
   
   const stageLabels = {
-    'pre_issue': '📦 ДО видачі (фіксація)',
-    'return': '📥 При поверненні',
-    'audit': '📋 При аудиті'
+    'pre_issue': 'ДО видачі (фіксація)',
+    'return': 'При поверненні',
+    'audit': 'При аудиті'
   }
   
-  const handleSave = async () => {
+  const handleSave = async (compareOnly = false) => {
     // Для pre_issue обов'язковий тільки опис
     if (!isPreIssue && !formData.kindCode) {
       alert('Оберіть тип пошкодження')
@@ -202,7 +207,6 @@ export default function DamageModal({
         try {
           const formDataUpload = new FormData()
           formDataUpload.append('file', photos[0])
-          // Передаємо order_number та sku для формування імені файлу
           if (order?.order_number) {
             formDataUpload.append('order_number', order.order_number)
           }
@@ -218,17 +222,16 @@ export default function DamageModal({
           
           if (uploadResponse.data.success) {
             uploadedPhotoUrl = uploadResponse.data.url
-            console.log(`[DamageModal] Photo uploaded: ${uploadedPhotoUrl}`)
           }
         } catch (uploadErr) {
           console.warn('[DamageModal] Photo upload failed:', uploadErr)
-          // Продовжуємо без фото
         }
       }
       
       const damageRecord = {
         id: 'pd-' + Math.floor(Math.random()*90000+100),
         kind: isPreIssue ? 'pre_existing' : formData.kindCode,
+        damage_code: formData.kindCode,
         category: formData.category,
         severity: formData.severity,
         note: formData.note,
@@ -237,40 +240,15 @@ export default function DamageModal({
         qty: formData.qty,
         at: new Date().toISOString(),
         photoName: uploadedPhotoUrl || formData.photoName,
-        created_by: userName
+        created_by: userName,
+        compare_only: compareOnly,
       }
       
-      // Визначаємо чи це повна втрата
-      const isTotalLoss = formData.kindCode === 'TOTAL_LOSS'
-      
-      // Save to damage history API
-      const response = await axios.post(`${BACKEND_URL}/api/product-damage-history/`, {
-        product_id: item.inventory_id || item.id,
-        sku: item.sku,
-        product_name: item.name,
-        category: formData.category,
-        order_id: order?.order_id,
-        order_number: order?.order_number,
-        stage: stage,
-        damage_type: isPreIssue ? 'Існуюча шкода' : (selectedKind?.label || formData.kindCode),
-        damage_code: isPreIssue ? 'pre_existing' : formData.kindCode,
-        severity: formData.severity,
-        fee: totalFee,
-        fee_per_item: isPreIssue ? 0 : formData.fee,
-        qty: formData.qty,
-        photo_url: uploadedPhotoUrl || formData.photoName,
-        note: formData.note,
-        created_by: userName,
-        // Для повної втрати - обробити як втрату
-        is_total_loss: isTotalLoss,
-        processing_type: isPreIssue ? 'none' : 'none'
-      })
-      
-      console.log(`[DamageModal] Saved damage record for ${item.sku} at stage ${stage}`, response.data)
-      
-      // Якщо повна втрата - зменшити кількість товару
-      if (isTotalLoss) {
-        try {
+      if (!compareOnly) {
+        const isTotalLoss = formData.kindCode === 'TOTAL_LOSS'
+        
+        if (isTotalLoss) {
+          // === ПОВНА ВТРАТА: тільки process-loss ===
           await axios.post(`${BACKEND_URL}/api/partial-returns/process-loss`, {
             product_id: item.inventory_id || item.id,
             sku: item.sku,
@@ -278,15 +256,111 @@ export default function DamageModal({
             qty: formData.qty,
             loss_amount: totalFee,
             order_id: order?.order_id,
-            order_number: order?.order_number
+            order_number: order?.order_number,
+            version_id: versionId || null,
+            skip_damage_record: false,
+            photo_url: uploadedPhotoUrl || formData.photoName || null,
+            note: formData.note || '',
+            created_by: userName,
+            category: formData.category,
+            severity: formData.severity,
           })
-          console.log(`[DamageModal] Processed total loss: ${item.sku} x${formData.qty}`)
-        } catch (lossErr) {
-          console.warn('[DamageModal] Failed to process loss:', lossErr)
+        } else {
+          // === В СТАН ДЕКОРУ ===
+          // На поверненні вимагаємо чергу обробки
+          if (stage === 'return' && (!formData.sendTo || formData.sendTo === 'none')) {
+            alert('Оберіть чергу обробки (Мийка / Реставрація / Пральня)')
+            setSaving(false)
+            return
+          }
+        
+          const response = await axios.post(`${BACKEND_URL}/api/product-damage-history/`, {
+            product_id: item.inventory_id || item.id,
+            sku: item.sku,
+            product_name: item.name,
+            category: formData.category,
+            order_id: order?.order_id,
+            order_number: order?.order_number,
+            stage: stage,
+            damage_type: isPreIssue ? 'Існуюча шкода' : (selectedKind?.label || formData.kindCode),
+            damage_code: isPreIssue ? 'pre_existing' : formData.kindCode,
+            severity: formData.severity,
+            fee: totalFee,
+            fee_per_item: isPreIssue ? 0 : formData.fee,
+            qty: formData.qty,
+            photo_url: uploadedPhotoUrl || formData.photoName,
+            note: formData.note,
+            created_by: userName,
+            processing_type: formData.sendTo && formData.sendTo !== 'none' 
+              ? (formData.sendTo === 'restore' ? 'restoration' : formData.sendTo)
+              : 'none',
+            processing_status: formData.sendTo && formData.sendTo !== 'none' ? 'pending' : null
+          })
+          
+          if (formData.sendTo && formData.sendTo !== 'none') {
+            try {
+              const damageId = response.data?.id || response.data?.damage_id
+              if (damageId) {
+                const endpoint = formData.sendTo === 'wash' ? 'send-to-wash'
+                  : formData.sendTo === 'restore' ? 'send-to-restoration'
+                  : formData.sendTo === 'laundry' ? 'send-to-laundry'
+                  : null
+                if (endpoint) {
+                  await axios.post(`${BACKEND_URL}/api/product-damage-history/${damageId}/${endpoint}`, {
+                    notes: formData.note || `Відправлено при поверненні замовлення ${order?.order_number || ''}`
+                  })
+                }
+              }
+            } catch (processErr) {
+              console.warn('[DamageModal] Failed to send to processing:', processErr)
+            }
+          }
+        }
+      } else {
+        // === БЕЗ ЗАПИСУ У СТАН: фіксація (фото + опис) для порівняння/доказів ===
+        // Зберігаємо як photo_only запис — без черг, без стану декору
+        await axios.post(`${BACKEND_URL}/api/product-damage-history/`, {
+          product_id: item.inventory_id || item.id,
+          sku: item.sku,
+          product_name: item.name,
+          category: formData.category,
+          order_id: order?.order_id,
+          order_number: order?.order_number,
+          stage: stage,
+          damage_type: isPreIssue ? 'Існуюча шкода (фіксація)' : (selectedKind?.label || formData.kindCode),
+          damage_code: isPreIssue ? 'pre_existing' : formData.kindCode,
+          severity: formData.severity,
+          fee: totalFee,
+          fee_per_item: isPreIssue ? 0 : formData.fee,
+          qty: formData.qty,
+          photo_url: uploadedPhotoUrl || formData.photoName,
+          note: formData.note,
+          created_by: userName,
+          processing_type: 'photo_only',
+          processing_status: 'documented'
+        })
+        
+        // Якщо на поверненні вибрано чергу — також відправити туди
+        if (stage === 'return' && formData.sendTo && formData.sendTo !== 'none') {
+          try {
+            const queueType = formData.sendTo === 'restore' ? 'restoration' : formData.sendTo
+            await axios.post(`${BACKEND_URL}/api/product-damage-history/quick-add-to-queue`, {
+              product_id: item.inventory_id || item.id,
+              sku: item.sku,
+              product_name: item.name,
+              category: formData.category,
+              queue_type: queueType,
+              quantity: formData.qty,
+              notes: formData.note || `Без запису у стан. Замовлення ${order?.order_number || ''}`
+            })
+          } catch (qErr) {
+            console.warn('[DamageModal] Failed to add to queue:', qErr)
+          }
         }
       }
+      // === кінець повного запису ===
       
-      // Call parent callback
+      // Call parent callback (завжди — і для порівняння, і для стану декору)
       if (onSave) {
         onSave(damageRecord)
       }
@@ -295,19 +369,24 @@ export default function DamageModal({
       
       // Success notification
       if (window.toast) {
-        window.toast({ 
-          title: isPreIssue ? '📝 Зафіксовано' : '✅ Успіх', 
-          description: isPreIssue 
-            ? `Існуючу шкоду зафіксовано (не нараховується клієнту). Виявив: ${userName}`
-            : response.data?.charged_to_client 
-              ? `Шкоду зафіксовано та нараховано клієнту: ₴${totalFee}`
-              : 'Шкоду зафіксовано (вже була при видачі - не нараховується)'
-        })
+        if (compareOnly) {
+          window.toast({ 
+            title: 'Зафіксовано для порівняння', 
+            description: `Шкоду зафіксовано в рамках замовлення (НЕ впливає на стан декору)`
+          })
+        } else {
+          window.toast({ 
+            title: isPreIssue ? 'Зафіксовано' : 'Успіх', 
+            description: isPreIssue 
+              ? `Шкоду зафіксовано в стані декору. Виявив: ${userName}`
+              : `Шкоду зафіксовано в стані декору та нараховано: ₴${totalFee}`
+          })
+        }
       }
       
     } catch (error) {
       console.error('[DamageModal] Error saving:', error)
-      alert('❌ Помилка збереження пошкодження')
+      alert('Помилка збереження пошкодження')
     } finally {
       setSaving(false)
     }
@@ -323,7 +402,7 @@ export default function DamageModal({
           <div className="mb-3 flex items-center justify-between">
             <div>
               <h3 className="text-base font-semibold text-blue-800">
-                📦 Фіксація шкоди ДО видачі
+                Фіксація шкоди ДО видачі
               </h3>
               <p className="text-xs text-blue-600 mt-1">
                 {item.sku} · {item.name}
@@ -340,7 +419,7 @@ export default function DamageModal({
           {/* Інформаційний банер */}
           <div className="mb-4 rounded-xl bg-blue-50 border border-blue-200 px-3 py-2">
             <div className="flex items-start gap-2">
-              <span className="text-lg">ℹ️</span>
+              <span className="text-lg"></span>
               <div className="text-xs text-blue-700">
                 <strong>Тільки фіксація!</strong> Ця шкода НЕ буде нарахована клієнту.
                 <br />Вкажіть опис та додайте фото для документації.
@@ -352,7 +431,7 @@ export default function DamageModal({
           {preIssueDamages.length > 0 && (
             <div className="mb-4 rounded-xl bg-amber-50 border border-amber-200 p-3">
               <div className="flex items-center gap-2 mb-2">
-                <span className="text-amber-600">📋</span>
+                <span className="text-amber-600"></span>
                 <span className="text-sm font-semibold text-amber-800">
                   Вже зафіксовано для цього замовлення ({preIssueDamages.length})
                 </span>
@@ -373,7 +452,7 @@ export default function DamageModal({
                         <div className="font-medium text-amber-900">{d.damage_type || 'Пошкодження'}</div>
                         {d.note && <div className="text-slate-600 mt-0.5">{d.note}</div>}
                         <div className="text-slate-400 mt-1 flex items-center gap-2">
-                          <span>👤 {d.created_by || 'Невідомо'}</span>
+                          <span>{d.created_by || 'Невідомо'}</span>
                           <span>•</span>
                           <span>{d.created_at}</span>
                         </div>
@@ -389,7 +468,7 @@ export default function DamageModal({
           {damageHistory.length > 0 && (
             <div className="mb-4 rounded-xl bg-red-50 border border-red-200 p-3">
               <div className="flex items-center gap-2 mb-2">
-                <span className="text-red-600">⚠️</span>
+                <span className="text-red-600"></span>
                 <span className="text-sm font-semibold text-red-800">
                   Історія пошкоджень товару ({damageHistory.length})
                 </span>
@@ -430,7 +509,7 @@ export default function DamageModal({
                         <div className="font-medium text-slate-900">{d.damage_type || d.type || 'Пошкодження'}</div>
                         {d.note && <div className="text-slate-600 mt-0.5">{d.note}</div>}
                         <div className="text-slate-400 mt-1 flex items-center gap-2 flex-wrap">
-                          <span>👤 {d.created_by || 'Невідомо'}</span>
+                          <span>{d.created_by || 'Невідомо'}</span>
                           <span>•</span>
                           <span>{d.created_at}</span>
                         </div>
@@ -483,8 +562,15 @@ export default function DamageModal({
               <PillButton tone='slate' onClick={onClose}>
                 Скасувати
               </PillButton>
-              <PillButton tone='blue' onClick={handleSave} disabled={saving || !formData.note.trim()}>
-                {saving ? '⏳ Збереження...' : '📝 Зафіксувати шкоду'}
+              <button
+                onClick={() => handleSave(true)}
+                disabled={saving || !formData.note.trim()}
+                className="rounded-full px-4 py-2 text-sm bg-amber-500 hover:bg-amber-600 text-white disabled:bg-amber-300"
+              >
+                {saving ? 'Збереження...' : 'Для порівняння'}
+              </button>
+              <PillButton tone='blue' onClick={() => handleSave(false)} disabled={saving || !formData.note.trim()}>
+                {saving ? 'Збереження...' : 'В стан декору'}
               </PillButton>
             </div>
           </div>
@@ -515,7 +601,7 @@ export default function DamageModal({
         {stage === 'return' && preIssueDamages.length > 0 && (
           <div className="mb-4 rounded-xl bg-blue-50 border border-blue-200 p-3">
             <div className="flex items-center gap-2 mb-2">
-              <span className="text-blue-600">📦</span>
+              <span className="text-blue-600"></span>
               <span className="text-sm font-semibold text-blue-800">
                 Шкода з етапу видачі ({preIssueDamages.length}) — не нараховується повторно
               </span>
@@ -564,7 +650,7 @@ export default function DamageModal({
               </select>
               {formData.kindCode === 'TOTAL_LOSS' && (
                 <div className="mt-1 text-xs text-red-600 font-medium">
-                  ⚠️ Товар буде списано з залишків!
+                  Товар буде списано з залишків!
                 </div>
               )}
             </div>
@@ -637,7 +723,7 @@ export default function DamageModal({
           {formData.qty > 1 && formData.fee > 0 && (
             <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
               <div className="flex items-center justify-between">
-                <span className="text-amber-800 text-sm">💰 Загальна сума:</span>
+                <span className="text-amber-800 text-sm">Загальна сума:</span>
                 <span className="text-amber-900 font-bold text-lg">
                   ₴ {(formData.fee * formData.qty).toLocaleString('uk-UA')}
                 </span>
@@ -665,6 +751,48 @@ export default function DamageModal({
             />
           </div>
 
+          {/* Send to Processing - optional for pre_issue, required for "В стан" on return, NOT for total loss */}
+          {!isPreIssue && formData.kindCode !== 'TOTAL_LOSS' && (
+            <div className="mb-4">
+              <div className="text-slate-500 mb-2 text-sm font-medium">
+                Відправити на обробку
+                <span className="text-xs text-slate-400 ml-1">(обов'язково для «В стан декору», за бажанням для фіксації)</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {[
+                  { value: 'wash', label: 'Мийка', color: 'blue' },
+                  { value: 'restore', label: 'Реставрація', color: 'orange' },
+                  { value: 'laundry', label: 'Пральня', color: 'purple' },
+                ].map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setFormData(prev => ({ ...prev, sendTo: opt.value }))}
+                    className={`px-3 py-3 rounded-xl border-2 text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                      formData.sendTo === opt.value
+                        ? opt.color === 'blue' ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-sm'
+                        : opt.color === 'orange' ? 'border-orange-500 bg-orange-50 text-orange-700 shadow-sm'
+                        : 'border-purple-500 bg-purple-50 text-purple-700 shadow-sm'
+                        : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                    }`}
+                    data-testid={`damage-send-${opt.value}`}
+                  >
+                    <span>{opt.label}</span>
+                  </button>
+                ))}
+              </div>
+              {formData.sendTo && formData.sendTo !== 'none' && (
+                <div className="mt-2 text-xs text-slate-500 bg-slate-50 rounded-lg p-2">
+                  {formData.qty} шт буде відправлено на {
+                    formData.sendTo === 'wash' ? 'мийку' :
+                    formData.sendTo === 'restore' ? 'реставрацію' :
+                    formData.sendTo === 'laundry' ? 'пральню' : ''
+                  }
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Note */}
           <div className="grid grid-cols-1 gap-3">
             <div>
@@ -683,16 +811,36 @@ export default function DamageModal({
             <PillButton tone='slate' onClick={onClose}>
               Скасувати
             </PillButton>
-            <PillButton tone='green' onClick={handleSave} disabled={saving}>
-              {saving ? '⏳ Збереження...' : 'Зафіксувати'}
-            </PillButton>
+            {formData.kindCode === 'TOTAL_LOSS' ? (
+              <button
+                onClick={() => handleSave(false)}
+                disabled={saving}
+                className="rounded-full px-5 py-2 text-sm bg-red-600 hover:bg-red-700 text-white disabled:bg-red-300 font-medium flex items-center gap-2"
+                data-testid="damage-write-off-btn"
+              >
+                {saving ? 'Списання...' : 'Списати'}
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => handleSave(true)}
+                  disabled={saving}
+                  className="rounded-full px-4 py-2 text-sm bg-amber-500 hover:bg-amber-600 text-white disabled:bg-amber-300"
+                >
+                  {saving ? 'Збереження...' : 'Без запису у стан'}
+                </button>
+                <PillButton tone='green' onClick={() => handleSave(false)} disabled={saving}>
+                  {saving ? 'Збереження...' : 'В стан декору'}
+                </PillButton>
+              </>
+            )}
           </div>
         </div>
 
         {/* History Section - ПОВНА ІСТОРІЯ ПОШКОДЖЕНЬ ТОВАРУ */}
         {(damageHistory.length > 0 || (item.pre_damage?.length > 0) || (existingHistory?.length > 0)) && (
           <div className="mt-4">
-            <Card title={`📜 Історія пошкоджень товару (${damageHistory.length || (item.pre_damage?.length || 0) + (existingHistory?.length || 0)})`}>
+            <Card title={`Історія пошкоджень товару (${damageHistory.length || (item.pre_damage?.length || 0) + (existingHistory?.length || 0)})`}>
               <div className="max-h-48 overflow-auto text-sm space-y-2">
                 {damageHistory.length > 0 ? (
                   damageHistory.map(d => (
@@ -723,7 +871,7 @@ export default function DamageModal({
                         <div className="font-medium">{d.damage_type || d.type || '—'}</div>
                         {d.note && <div className="text-slate-600">{d.note}</div>}
                         <div className="text-slate-400 mt-1">
-                          {d.created_at} {d.created_by && `· 👤 ${d.created_by}`}
+                          {d.created_at} {d.created_by && `· ${d.created_by}`}
                         </div>
                       </div>
                     </div>
@@ -738,8 +886,8 @@ export default function DamageModal({
                         </Badge> · 
                         {d.fee > 0 ? `₴${d.fee}` : 'Без нарахування'} · {d.note || '—'}
                         <div className="text-slate-400 mt-0.5">
-                          {d.at?.slice(0,16)} {d.photoName? `· 📷 ${d.photoName}`:''} 
-                          {d.created_by && ` · 👤 ${d.created_by}`}
+                          {d.at?.slice(0,16)} {d.photoName? `· ${d.photoName}`:''} 
+                          {d.created_by && ` · ${d.created_by}`}
                         </div>
                       </li>
                     ))}

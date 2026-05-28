@@ -78,16 +78,18 @@ function CompactItemCard({
   
   // Packaging options
   const packagingOptions = [
-    { key: 'cover', label: 'Чохол' },
-    { key: 'box', label: 'Коробка' },
-    { key: 'stretch', label: 'Стретч' },
-    { key: 'black_case', label: 'Чорний кейс' },
-    { key: 'foam', label: 'Поролон' },
-    { key: 'paper', label: 'Папір' },
-    { key: 'bubble', label: 'Бульбашка' },
+    { key: 'native_cover', label: 'Рідний чохол' },
+    { key: 'native_box', label: 'Рідна коробка' },
+    { key: 'felt', label: 'Войлок' },
+    { key: 'special', label: 'Спец. пакування' },
+    { key: 'other', label: 'Інше' },
   ]
   
   const selectedPackaging = packagingOptions.filter(p => item.packaging?.[p.key]).map(p => p.label)
+
+  const packagingSummary = packagingOptions
+    .filter(p => (parseInt(item.packaging?.[p.key]) || 0) > 0)
+    .map(p => `${p.label}: ${item.packaging[p.key]}`)
   
   // Обробка кліку на фото
   const handlePhotoClick = (e) => {
@@ -123,7 +125,7 @@ function CompactItemCard({
             </span>
           )}
           {item.location?.zone && item.location.zone !== 'None' && (
-            <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">📍{item.location.zone}</span>
+            <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{item.location.zone}</span>
           )}
         </div>
       </div>
@@ -142,7 +144,7 @@ function CompactItemCard({
           {photoUrl ? (
             <img src={photoUrl} alt="" className="w-full h-full object-cover" />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-slate-300 text-xs">📦</div>
+            <div className="w-full h-full flex items-center justify-center text-slate-300 text-xs">—</div>
           )}
         </div>
         
@@ -155,12 +157,24 @@ function CompactItemCard({
           >
             −
           </button>
-          <div className={`
-            w-8 text-center text-sm font-bold
-            ${isComplete ? 'text-emerald-600' : 'text-slate-800'}
-          `}>
-            {pickedQty}
-          </div>
+          <input
+            type="number"
+            value={pickedQty}
+            onChange={(e) => {
+              if (readOnly) return;
+              const v = Math.max(0, parseInt(e.target.value) || 0);
+              onPick?.(item.id, v);
+            }}
+            disabled={readOnly}
+            className={`
+              w-10 h-8 text-center text-sm font-bold border border-slate-200 rounded-lg
+              [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none
+              ${isComplete ? 'text-emerald-600' : 'text-slate-800'}
+              disabled:opacity-50
+            `}
+            min="0"
+            data-testid={`pick-qty-input-${item.id}`}
+          />
           <button 
             onClick={() => !readOnly && onPick?.(item.id, pickedQty + 1)} 
             disabled={readOnly}
@@ -238,9 +252,17 @@ function CompactItemCard({
                           {d.stage_label || d.stage}
                         </span>
                         {d.order_number && <span className="text-slate-400">#{d.order_number}</span>}
-                        {d.fee > 0 && <span className="text-red-600">₴{d.fee}</span>}
+                        {(d.qty || 1) > 1 && <span className="font-bold text-slate-700">{d.qty} шт</span>}
+                        {d.fee > 0 && <span className="text-red-600 font-medium">₴{d.fee}</span>}
                       </div>
-                      <div className="text-slate-700 truncate">{d.damage_type || d.type}</div>
+                      <div className="text-slate-700 truncate">
+                        {d.damage_type || d.type}
+                        {(d.qty || 1) > 1 && d.fee > 0 && (
+                          <span className="text-slate-400 font-normal ml-1">
+                            ({d.qty} × ₴{Math.round(d.fee / d.qty)})
+                          </span>
+                        )}
+                      </div>
                       {d.note && <div className="text-slate-500 truncate">{d.note}</div>}
                       <div className="text-slate-400">{d.created_at}</div>
                     </div>
@@ -281,7 +303,7 @@ function CompactItemCard({
               Пакування
             </span>
             <span className="text-slate-800 font-medium">
-              {selectedPackaging.length > 0 ? selectedPackaging.join(', ') : 'Не обрано'}
+              {packagingSummary.length > 0 ? packagingSummary.join(', ') : 'Не обрано'}
             </span>
           </button>
           
@@ -385,25 +407,50 @@ function CompactItemCard({
                 <X className="w-5 h-5 text-slate-500" />
               </button>
             </div>
-            <div className="p-3 grid grid-cols-2 gap-2">
-              {packagingOptions.map(opt => (
-                <label 
-                  key={opt.key}
-                  className={`
-                    flex items-center gap-2 p-3 rounded-xl border cursor-pointer transition-colors
-                    ${item.packaging?.[opt.key] ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200'}
-                  `}
-                >
-                  <input 
-                    type="checkbox" 
-                    checked={item.packaging?.[opt.key] || false} 
-                    onChange={(e) => !readOnly && onPackagingChange?.(item.id, opt.key, e.target.checked)} 
-                    disabled={readOnly}
-                    className="w-5 h-5 rounded" 
-                  />
-                  <span className="text-sm font-medium">{opt.label}</span>
-                </label>
-              ))}
+            <div className="p-3 space-y-2">
+              {packagingOptions.map(opt => {
+                const qty = parseInt(item.packaging?.[opt.key]) || 0
+                return (
+                  <div 
+                    key={opt.key}
+                    className={`
+                      flex items-center gap-3 p-3 rounded-xl border transition-colors
+                      ${qty > 0 ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200'}
+                    `}
+                  >
+                    <span className="flex-1 text-sm font-medium text-slate-800">{opt.label}</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => !readOnly && onPackagingChange?.(item.id, opt.key, Math.max(0, qty - 1))}
+                        disabled={readOnly || qty <= 0}
+                        className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-sm flex items-center justify-center disabled:opacity-30"
+                      >-</button>
+                      <input
+                        type="number"
+                        value={qty}
+                        onChange={(e) => !readOnly && onPackagingChange?.(item.id, opt.key, Math.max(0, parseInt(e.target.value) || 0))}
+                        disabled={readOnly}
+                        className="w-12 h-8 text-center text-sm font-bold border border-slate-200 rounded-lg"
+                        min="0"
+                      />
+                      <button
+                        onClick={() => !readOnly && onPackagingChange?.(item.id, opt.key, qty + 1)}
+                        disabled={readOnly}
+                        className="w-8 h-8 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-700 font-bold text-sm flex items-center justify-center disabled:opacity-30"
+                      >+</button>
+                    </div>
+                  </div>
+                )
+              })}
+              {item.packaging?.other > 0 && (
+                <input
+                  type="text"
+                  value={item.packaging?.other_text || ''}
+                  onChange={(e) => !readOnly && onPackagingChange?.(item.id, 'other_text', e.target.value)}
+                  placeholder="Опишіть пакування..."
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-xl focus:ring-1 focus:ring-emerald-400"
+                />
+              )}
             </div>
           </div>
         </div>

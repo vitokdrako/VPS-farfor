@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { LogOut, User, ChevronDown } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { LogOut, User, ChevronDown, ArrowLeft } from 'lucide-react';
 
 interface CorporateHeaderProps {
   cabinetName?: string;
@@ -16,6 +16,7 @@ export default function CorporateHeader({
   const [user, setUser] = useState<any>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
 
   useEffect(() => {
     const userData = localStorage.getItem('user');
@@ -39,15 +40,24 @@ export default function CorporateHeader({
     navigate('/login');
   };
 
+  // Дефолтний дашборд за роллю користувача (fallback, коли немає історії навігації)
+  const getDefaultDashboard = () => {
+    const role = user?.role;
+    if (role === 'manager') return '/manager-cabinet';
+    return '/manager';
+  };
+
   const handleBack = () => {
     if (onBackClick) {
       onBackClick();
-    } else if (window.history.length > 1) {
-      // Step back in browser history (e.g. back to PickingList, Calendar, etc.)
+      return;
+    }
+    // location.key === 'default' означає що це перший запис у сесії react-router (прямий вхід / refresh).
+    // У такому разі fallback на дашборд. Інакше — крок назад в історії.
+    if (location.key && location.key !== 'default') {
       navigate(-1);
     } else {
-      // Fallback if opened in a new tab without history
-      navigate('/manager');
+      navigate(getDefaultDashboard());
     }
   };
 
@@ -80,13 +90,17 @@ export default function CorporateHeader({
         
         {/* Right: User Menu */}
         <div className="flex items-center gap-2">
-          {/* Back button (if shown) */}
+          {/* Back button (if shown) — видимий і на мобільному (icon-only) */}
           {showBackButton && (
             <button 
-              className="hidden sm:flex corp-btn corp-btn-secondary text-sm"
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-corp border border-corp-border bg-white text-corp-text-dark hover:bg-corp-bg-light transition-colors text-xs sm:text-sm"
               onClick={handleBack}
+              data-testid="header-back-btn"
+              aria-label="Назад"
+              title="Назад"
             >
-              ← Назад
+              <ArrowLeft className="w-4 h-4" />
+              <span className="hidden sm:inline">Назад</span>
             </button>
           )}
           

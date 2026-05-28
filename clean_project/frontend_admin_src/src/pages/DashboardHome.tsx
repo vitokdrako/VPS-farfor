@@ -26,15 +26,6 @@ export default function DashboardHome() {
       roles: ['admin', 'manager']
     },
     {
-      id: 'finance',
-      title: 'Фінанси',
-      icon: '💰',
-      description: 'Платежі, рахунки, застави',
-      route: '/finance',
-      color: 'from-amber-500 to-orange-500',
-      roles: ['admin', 'manager']
-    },
-    {
       id: 'catalog',
       title: 'Каталог',
       icon: '📚',
@@ -63,7 +54,7 @@ export default function DashboardHome() {
       title: 'Завдання PRO',
       icon: '📋',
       description: 'Kanban дошка, мийка, збір',
-      route: '/tasks',
+      route: '/cabinet?tab=tasks',
       color: 'from-purple-500 to-violet-500'
     },
     {

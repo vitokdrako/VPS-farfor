@@ -6,58 +6,84 @@ Comprehensive rental management platform (React + FastAPI + MySQL) syncing from 
 ## Core Requirements
 - Multi-role support: Admin, Manager, Requisitor
 - Order lifecycle: Draft → Awaiting → Processing → Issued → Returned
-- Inventory sync from OpenCart
+- Inventory sync from OpenCart (RentalHub as source of truth — reverse sync)
 - Damage tracking with photos and history
 - Financial tracking (payments, deposits, refunds)
 - Calendar, catalog, moodboard features
+- Mobile-friendly UI for warehouse workers
 
-## What's Been Implemented
+## Test Credentials
+See `/app/memory/test_credentials.md`
 
-### Completed Features
-- Full order management pipeline
-- Catalog with multi-select color/material filters
-- Reaudit Cabinet (cards UI with thumbnails, filters)
-- OpenCart sync (categories, products, inventory)
-- Database deduplication & cleanup scripts
-- Product disabling/deletion endpoints
-- Damage history tracking (`product_damage_history` table)
-- `has_damage_history` flag on all order items globally
-- Production build workflow (build → copy to clean_project/frontend_build/)
-- **[2026-03-26] Damage warnings on cards:**
-  - Inline ⚠️ SVG icon next to item name in ZoneItemsList (visible without expanding)
-  - Damage badge on ManagerDashboard OrderCards (shows count of damaged items)
-  - DamagePhotoViewer modal on manager cards (quick photo access for client discussions)
-  - Damage badge on return cards in Повернення column
-  - Backend enrichment of issue_cards with damage_items_count, damage_photos, has_damage_items
+## What's Been Implemented (latest first)
 
-### Known Issues
-- P1: Multiple photos per product (not started)
-- P2: `convert-to-order` endpoint instability
-- P2: Moodboard export broken
-- P2: Calendar timezone bug
-- P2: Re-audit "Total Loss" button logic
+### 2026-05-28
+- **Mobile UI: top toolbars refactored** on `ManagerDashboard.jsx` and `PickingListPage.jsx` (smaller paddings, `text-xs/sm:text-sm`, flex-wrap with smaller gaps; search and counter stack vertically on mobile).
+- **Back button navigation fix**:
+  - `CorporateHeader.tsx` now uses `location.key !== 'default'` to detect real history (replaces fragile `window.history.length > 1`).
+  - Back button now visible on mobile (icon + label on desktop, icon only on mobile).
+  - Default fallback dashboard is role-based (`/manager-cabinet` for manager, `/manager` otherwise).
+  - Removed hardcoded `navigate('/manager')` overrides in `PersonalCabinet`, `AdminPanel`, `UnifiedCalendarNew` — they now use smart default.
+  - Added `showBackButton` to `ReauditCabinetFull`, `CatalogBoard`, `ManagerCabinet`, `PickingListPage`.
+  - Removed duplicate toolbar back button from `PickingListPage`.
 
-### Backlog / Future Tasks
-- P1: Post-deployment health check
-- P1: Simplify `laundry_items` table/logic
-- P3: Real-time updates (WebSockets)
-- P3: Unify NewOrderViewWorkspace + IssueCardWorkspace
-- P3: Full RBAC
-- P3: HR/Ops Module
-- P3: Telegram bot integration
+### 2026-02 / Earlier
+- Reverse sync from RentalHub → OpenCart (`sync_all.py`).
+- Picking List page (`PickingListPage.jsx`) with task integration, kits, zone grouping.
+- Reaudit CRUD: create with auto-SKU, duplicate.
+- Restored 5-tab Kasa finance UI (`KasaPage.jsx`, 1900+ lines) and Admin panel (`AdminPanel.jsx`).
+- Added `components` column to products table for kits.
+- Damage history with photos, badges on cards.
+- OpenCart sync (categories, products, inventory).
+- Production build workflow: build at `/app/clean_project/frontend_admin_src/build/` → copied to `/app/clean_project/frontend_build/`.
+
+## Pending / Roadmap
+
+### P0
+- (none currently — last P0 mobile UI + Back nav resolved 2026-05-28)
+
+### P1
+- Fix Jinja2 syntax in `invoice_legal` template (FOP/TOV conditional logic). File: `backend/services/doc_engine/data_builders.py`.
+- Post-deployment health check across all major features.
+
+### P2
+- Stabilize `convert-to-order` endpoint.
+- Restore Moodboard export.
+- Recurring Calendar timezone bug.
+- Unify Catalog + Reaudit into single `/products` interface.
+- Simplify `laundry_items` table/logic.
+
+### P3 / Future
+- WebSockets for real-time client cabinet updates.
+- Unify `NewOrderViewWorkspace.jsx` + `IssueCardWorkspace.jsx`.
+- Full RBAC.
+- HR/Ops module.
+- Telegram bot integration.
 
 ## Architecture
-- Frontend: React (TypeScript/JSX), Tailwind CSS, Shadcn UI
-- Backend: FastAPI, SQLAlchemy (MySQL)
-- Database: MySQL (RentalHub) + OpenCart sync
-- Auth: JWT-based
+```
+/app/
+├── backend/
+│   ├── routes/
+│   │   ├── audit.py             # Inventory CRUD
+│   │   ├── picking_list.py      # Picking list API
+│   │   ├── finance.py           # 4000+ line advanced finance
+│   │   ├── admin_orders.py      
+│   │   ├── bulk_products.py     
+│   ├── sync_all.py              # OpenCart reverse-sync cron
+└── frontend/
+    └── src/
+        ├── pages/
+        │   ├── KasaPage.jsx
+        │   ├── PickingListPage.jsx
+        │   ├── ManagerDashboard.jsx
+        │   ├── AdminPanel.jsx
+        ├── components/
+        │   └── CorporateHeader.tsx  # Centralized Back button logic
+```
 
-## Key Endpoints
-- GET /api/manager/dashboard/overview - Dashboard data (now with damage enrichment)
-- GET /api/orders/{order_id} - Order details with item damage history
-- GET /api/audit/items - Reaudit board
-- PUT /api/audit/items/{id}/edit-full - Product editing with photo upload
-
-## Credentials
-- Admin: vitokdrako@gmail.com / test123
-- Manager: max@test.com / test123
+## Build Workflow (deploy)
+1. Edit `/app/frontend/src/**`
+2. `rsync -av --exclude node_modules --exclude build /app/frontend/src/ /app/clean_project/frontend_admin_src/src/`
+3. `cd /app/clean_project/frontend_admin_src && yarn build`
+4. `rsync -av --delete /app/clean_project/frontend_admin_src/build/ /app/clean_project/frontend_build/`

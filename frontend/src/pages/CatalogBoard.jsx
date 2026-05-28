@@ -1876,7 +1876,7 @@ export default function CatalogBoard() {
 
   return (
     <div className="min-h-screen bg-corp-bg-page font-montserrat">
-      <CorporateHeader cabinetName="Каталог" />
+      <CorporateHeader cabinetName="Каталог" showBackButton />
       
       {/* Tabs */}
       <div className="bg-white border-b border-corp-border">

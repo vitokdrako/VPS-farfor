@@ -25,6 +25,7 @@ import {
   ZoneItemsReturn,
   ZoneReturnFees,
   ZoneRequisitors,
+  ZonePackagingReturn,
 } from '../components/order-workspace/zones'
 // FinanceStatusCard тепер тільки в LeftRailFinance
 
@@ -64,6 +65,7 @@ export default function ReturnOrderWorkspace() {
   const [lateFee, setLateFee] = useState(0)
   const [cleaningFee, setCleaningFee] = useState(0)
   const [damageFee, setDamageFee] = useState(0)
+  const [packagingFee, setPackagingFee] = useState(0)
   
   // Нотатки та таймлайн
   const [notes, setNotes] = useState('')
@@ -172,6 +174,20 @@ export default function ReturnOrderWorkspace() {
       
       setItems(transformedItems)
       
+      // Завантажити пакування per-item з issue card
+      try {
+        const pkgRes = await axios.get(`${BACKEND_URL}/api/issue-cards/by-order/${orderId}/item-packaging`)
+        const pkgMap = pkgRes.data?.packaging || {}
+        if (Object.keys(pkgMap).length > 0) {
+          setItems(prev => prev.map(item => {
+            const pkgData = pkgMap[item.sku]
+            return pkgData ? { ...item, issued_packaging: pkgData.packaging } : item
+          }))
+        }
+      } catch (err) {
+        console.warn('[ReturnWorkspace] Could not load item packaging:', err)
+      }
+      
       // === Завантажити історію пошкоджень для кожного товару ===
       // Це важливо, щоб приймальник бачив попередні дефекти
       const loadDamageHistory = async () => {
@@ -230,15 +246,6 @@ export default function ReturnOrderWorkspace() {
   // Обгортаємо в useCallback для автооновлення
   const loadOrderCallback = useCallback(loadOrder, [orderId])
 
-  // Автооновлення кожні 15 секунд
-  // Синхронізація змін з іншими користувачами
-  const { hasNewChanges, lastModifiedBy, markMyUpdate, dismissChanges } = useOrderSync(
-    orderId,
-    loadOrderCallback,
-    10000,
-    !loading && !!orderId
-  )
-  
   // WebSocket синхронізація (real-time)
   const {
     connected: wsConnected,
@@ -250,7 +257,7 @@ export default function ReturnOrderWorkspace() {
     enabled: !loading && !!orderId,
     onSectionUpdate: (data) => {
       toast({
-        title: '🔄 Зміни від іншого користувача',
+        title: 'Зміни від іншого користувача',
         description: `${data.updated_by_name} оновив ${data.section}`,
       })
     },
@@ -262,6 +269,15 @@ export default function ReturnOrderWorkspace() {
       })
     },
   })
+  
+  // ОПТИМІЗАЦІЯ P0.2: Синхронізація змін - вимкнено polling коли WS активний
+  const { hasNewChanges, lastModifiedBy, markMyUpdate, dismissChanges } = useOrderSync(
+    orderId,
+    loadOrderCallback,
+    10000,
+    !loading && !!orderId,
+    { wsConnected }  // Передаємо статус WS для вимкнення polling
+  )
   
   // Хук для повідомлення про збереження
   const { updateSection } = useOrderSectionUpdate()
@@ -275,7 +291,7 @@ export default function ReturnOrderWorkspace() {
   useEffect(() => {
     if (hasNewChanges && lastModifiedBy) {
       toast({
-        title: '🔄 Дані оновлено',
+        title: 'Дані оновлено',
         description: `${lastModifiedBy} зберіг зміни`,
       })
       dismissChanges()
@@ -305,21 +321,36 @@ export default function ReturnOrderWorkspace() {
   }
   
   const handleSaveDamage = (damageRecord) => {
-    setItems(items => items.map(it => 
-      it.id === damageModal.itemId 
-        ? { ...it, findings: [...it.findings, damageRecord] } 
-        : it
-    ))
+    const isTotalLoss = damageRecord.damage_code === 'TOTAL_LOSS' || damageRecord.kindCode === 'TOTAL_LOSS'
+    const lossQty = isTotalLoss ? (parseInt(damageRecord.qty) || 1) : 0
+    
+    setItems(items => items.map(it => {
+      if (it.id !== damageModal.itemId) return it
+      const newReturnedQty = isTotalLoss 
+        ? Math.min(it.rented_qty, it.returned_qty + lossQty)
+        : it.returned_qty
+      return { 
+        ...it, 
+        findings: [...it.findings, damageRecord],
+        returned_qty: newReturnedQty
+      }
+    }))
     setDamageFee(prev => prev + (Number(damageRecord.fee) || 0))
     setTimeline(prev => [
-      { text: `Зафіксовано пошкодження: ${damageRecord.category} - ${damageRecord.kind}`, at: nowISO(), tone: 'amber' },
+      { 
+        text: isTotalLoss 
+          ? `Списано (повна втрата): ${damageRecord.category || ''} - ${damageRecord.kind || ''} x${lossQty}` 
+          : `Зафіксовано пошкодження: ${damageRecord.category} - ${damageRecord.kind}`, 
+        at: nowISO(), 
+        tone: isTotalLoss ? 'red' : 'amber' 
+      },
       ...prev
     ])
     setDamageModal({ open: false, itemId: null })
   }
 
   // === РОЗРАХУНКИ ===
-  const totalFees = lateFee + cleaningFee + damageFee
+  const totalFees = lateFee + cleaningFee + damageFee + packagingFee
   const allReturned = useMemo(() => items.every(it => it.returned_qty >= it.rented_qty), [items])
   const allSerialsOk = useMemo(() => items.every(it => 
     it.serials.length === 0 || it.ok_serials.length >= it.rented_qty
@@ -386,7 +417,7 @@ export default function ReturnOrderWorkspace() {
         })
       }
       
-      toast({ title: '✅ Збережено', description: 'Прогрес повернення збережено' })
+      toast({ title: 'Збережено', description: 'Прогрес повернення збережено' })
     } catch (err) {
       console.error('Save error:', err)
       toast({ title: 'Помилка збереження', variant: 'destructive' })
@@ -399,7 +430,7 @@ export default function ReturnOrderWorkspace() {
   const completeReturn = async () => {
     if (!canComplete) {
       toast({
-        title: '⚠️ Увага',
+        title: 'Увага',
         description: 'Перевірте всі позиції та серійні номери',
         variant: 'destructive'
       })
@@ -447,7 +478,7 @@ export default function ReturnOrderWorkspace() {
       
       if (itemsToAccept.length === 0) {
         toast({
-          title: '⚠️ Увага',
+          title: 'Увага',
           description: 'Відмітьте товари які повернено',
           variant: 'destructive'
         })
@@ -480,13 +511,13 @@ export default function ReturnOrderWorkspace() {
       if (result.all_completed) {
         setIsReturnCompleted(true)
         toast({ 
-          title: '✅ Замовлення закрито', 
+          title: 'Замовлення закрито', 
           description: `Нараховано прострочення: ₴${result.total_late_fee?.toFixed(2) || '0.00'}` 
         })
         setTimeout(() => navigate('/manager'), 2000)
       } else {
         toast({ 
-          title: '📦 Товари прийнято', 
+          title: 'Товари прийнято', 
           description: result.message
         })
         // Перезавантажити дані
@@ -531,7 +562,7 @@ export default function ReturnOrderWorkspace() {
       // Перезавантажити дані (залишаємося на сторінці)
       loadOrder()
     } else {
-      toast({ title: '✅ Успіх', description: 'Повернення завершено' })
+      toast({ title: 'Успіх', description: 'Повернення завершено' })
       setTimeout(() => navigate('/manager'), 2000)
     }
   }
@@ -570,7 +601,7 @@ export default function ReturnOrderWorkspace() {
         ...prev
       ])
       
-      toast({ title: '✅ Успіх', description: 'Повернення завершено' })
+      toast({ title: 'Успіх', description: 'Повернення завершено' })
       setTimeout(() => navigate('/manager'), 2000)
       
     } catch (err) {
@@ -622,11 +653,6 @@ export default function ReturnOrderWorkspace() {
               email={clientEmail}
               tier="regular"
             />
-            <LeftRailFinance
-              orderId={order?.order_id}
-              rentAmount={totalRent}
-              depositAmount={totalDeposit}
-            />
             <LeftRailDocuments
               orderId={order?.order_id}
               orderNumber={order?.order_number}
@@ -639,7 +665,7 @@ export default function ReturnOrderWorkspace() {
         
         // Footer
         onPrimaryAction={completeReturn}
-        primaryLabel="✅ Завершити приймання"
+        primaryLabel="Завершити приймання"
         primaryDisabled={saving || !canComplete}
         primaryDisabledReason={!canComplete ? 'Перевірте всі позиції' : ''}
         showSave={true}
@@ -675,15 +701,10 @@ export default function ReturnOrderWorkspace() {
           isCompleted={isReturnCompleted}
         />
         
-        {/* Нарахування штрафів */}
-        <ZoneReturnFees
-          lateFee={lateFee}
-          cleaningFee={cleaningFee}
-          damageFee={damageFee}
-          onSetLateFee={setLateFee}
-          onSetCleaningFee={setCleaningFee}
-          onSetDamageFee={setDamageFee}
-          readOnly={false}
+        {/* Повернення тари */}
+        <ZonePackagingReturn
+          orderId={orderId}
+          onChargeChange={(total) => setPackagingFee(total)}
         />
         
         {/* Документи переміщено в LeftRailDocuments */}
@@ -717,7 +738,7 @@ export default function ReturnOrderWorkspace() {
         onVersionCreated={(newOrderId, redirectUrl) => {
           // Редірект на нове замовлення (версію)
           toast({
-            title: '✅ Створено часткове повернення',
+            title: 'Створено часткове повернення',
             description: `Перенаправлення на нове замовлення...`
           })
           navigate(redirectUrl || `/return/${newOrderId}`)

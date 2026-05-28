@@ -28,6 +28,9 @@ import {
   ZoneItemsList,
   ZoneNotes,
   ZoneDocuments,
+  ZoneEventInfo,
+  ZonePaymentStatus,
+  ZoneOperational,
 } from '../components/order-workspace/zones'
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || ''
@@ -51,6 +54,10 @@ export default function NewOrderViewWorkspace() {
   const [managerId, setManagerId] = useState(null)
   const [managerName, setManagerName] = useState('')
   const [discount, setDiscount] = useState(0)
+  const [discountAmount, setDiscountAmount] = useState(0)
+  const [serviceFee, setServiceFee] = useState(0)
+  const [serviceFeeName, setServiceFeeName] = useState('')
+  const [additionalServicesTotal, setAdditionalServicesTotal] = useState(0)
   
   // Дати
   const [issueDate, setIssueDate] = useState('')
@@ -172,7 +179,10 @@ export default function NewOrderViewWorkspace() {
         setClientName(decorOrder.client_name || '')
         setClientPhone(decorOrder.client_phone || '')
         setClientEmail(decorOrder.client_email || '')
-        setDiscount(decorOrder.discount || 0)
+        setDiscount(decorOrder.discount || decorOrder.discount_percent || 0)
+        setDiscountAmount(decorOrder.discount_amount || 0)
+        setServiceFee(decorOrder.service_fee || 0)
+        setServiceFeeName(decorOrder.service_fee_name || '')
         setManagerId(decorOrder.manager_id || null)
         setManagerName(decorOrder.manager_name || '')
         
@@ -233,6 +243,14 @@ export default function NewOrderViewWorkspace() {
         }
       }
       
+      // Завантажити additional services
+      try {
+        const token = localStorage.getItem('token')
+        const svcRes = await axios.get(`${BACKEND_URL}/api/orders/${orderId}/additional-services`, { headers: { 'Authorization': `Bearer ${token}` } })
+        const svcs = svcRes.data?.services || svcRes.data || []
+        setAdditionalServicesTotal(svcs.reduce((s, sv) => s + (sv.amount || 0), 0))
+      } catch (e) { /* ok - may not exist */ }
+      
     } catch (err) {
       console.error('[Workspace] ❌ Error loading order:', err)
       toast({
@@ -252,7 +270,7 @@ export default function NewOrderViewWorkspace() {
       return
     }
     checkAvailability()
-  }, [issueDate, returnDate, items])
+  }, [issueDate, returnDate, items, decorOrderStatus])  // ✅ Додано decorOrderStatus для перевірки при зміні статусу
   
   const checkAvailability = async () => {
     setCheckingConflicts(true)
@@ -276,25 +294,45 @@ export default function NewOrderViewWorkspace() {
         }))
       })
       
+      console.log('[Availability] Response:', response.data)
+      
       if (response.data?.items) {
         const foundConflicts = response.data.items
           .map(item => {
             let conflictType = null
             let level = 'warning'
             
+            // ✅ Спочатку перевіряємо processing warnings (важливіше ніж інші)
+            if (item.needs_processing_rush || item.has_processing_warning) {
+              // ⚠️ Товар на обробці - потрібно поторопитися
+              conflictType = item.needs_processing_rush ? 'processing_rush' : 'on_processing'
+              level = 'warning'
+            }
+            
+            // Потім перевіряємо критичні помилки (перезаписують warning)
             if (item.available_quantity === 0) {
               conflictType = 'out_of_stock'
               level = 'error'
             } else if (item.available_quantity < item.requested_quantity) {
               conflictType = 'insufficient'
               level = 'error'
-            } else if (item.has_tight_schedule) {
-              conflictType = 'tight_schedule'
-              level = 'warning'
-            } else if (item.available_quantity < item.total_quantity * 0.2) {
-              conflictType = 'low_stock'
-              level = 'warning'
             }
+            
+            // Якщо немає критичних помилок, перевіряємо інші warnings
+            if (!conflictType) {
+              if (item.has_partial_return_risk) {
+                conflictType = 'partial_return_risk'
+                level = 'warning'
+              } else if (item.has_tight_schedule) {
+                conflictType = 'tight_schedule'
+                level = 'warning'
+              } else if (item.available_quantity < item.total_quantity * 0.2) {
+                conflictType = 'low_stock'
+                level = 'warning'
+              }
+            }
+            
+            console.log(`[Availability] Item ${item.sku}: type=${conflictType}, processing_warning=${item.has_processing_warning}, on_processing=${item.on_processing_quantity}`)
             
             if (conflictType) {
               return {
@@ -304,14 +342,22 @@ export default function NewOrderViewWorkspace() {
                 level,
                 available: item.available_quantity,
                 requested: item.requested_quantity,
+                ready: item.ready_quantity,  // ✅ НОВЕ: Готово до видачі (без обробки)
+                onProcessing: item.on_processing_quantity || 0,  // ✅ НОВЕ: На обробці
                 // ✅ Додаємо детальну інформацію про конфліктуючі замовлення
-                nearbyOrders: item.nearby_orders || []
+                nearbyOrders: item.nearby_orders || [],
+                // ⚠️ Інформація про часткові повернення
+                partialReturnWarnings: item.partial_return_warnings || [],
+                partialReturnQty: item.partial_return_qty || 0,
+                // ⚠️ НОВЕ: Інформація про товари на обробці
+                processingWarnings: item.processing_warnings || []
               }
             }
             return null
           })
           .filter(Boolean)
         
+        console.log('[Availability] Found conflicts:', foundConflicts)
         setConflicts(foundConflicts)
       } else {
         setConflicts([])
@@ -341,17 +387,23 @@ export default function NewOrderViewWorkspace() {
       return sum + (deposit * qty)
     }, 0)
     
-    const discountAmount = (totalRent * discount) / 100
-    const rentAfterDiscount = totalRent - discountAmount
+    const discountCalcAmount = discountAmount > 0 
+      ? discountAmount  // Фіксована сума має пріоритет
+      : (totalRent * discount) / 100  // Інакше рахуємо з відсотків
+    const rentAfterDiscount = totalRent - discountCalcAmount
+    // Загальна оренда з урахуванням додаткових послуг (мінімальне замовлення тощо)
+    const rentWithServiceFee = rentAfterDiscount + (serviceFee || 0)
     
     return {
       totalRent,
       totalDeposit,
-      discountAmount,
+      discountAmount: discountCalcAmount,
+      totalDiscount: discountCalcAmount,
       rentAfterDiscount,
+      rentWithServiceFee,
       itemsCount: items.length
     }
-  }, [items, rentalDays, discount])
+  }, [items, rentalDays, discount, discountAmount, serviceFee])
   
   // === ПОШУК ТОВАРІВ ===
   const handleSearch = async (query) => {
@@ -490,11 +542,13 @@ export default function NewOrderViewWorkspace() {
         return_time: returnTime,
         rental_days: rentalDays,
         manager_comment: managerNotes,
-        discount: discount, // ✅ FIXED: Відсоток знижки (%)
-        discount_amount: calculations.discountAmount, // Сума знижки в грн
+        discount: discount, // Відсоток знижки (%)
+        discount_amount: discountAmount || calculations.discountAmount, // Сума знижки в грн
         manager_id: managerId,
-        // Фінансові дані - ДЖЕРЕЛО ПРАВДИ
-        total_price: calculations.rentAfterDiscount,
+        service_fee: serviceFee, // Додаткова послуга - сума
+        service_fee_name: serviceFeeName, // Додаткова послуга - назва
+        // Фінансові дані - total_price = сума товарів ДО знижки (без service_fee)
+        total_price: calculations.totalRent,
         deposit_amount: calculations.totalDeposit,
         total_loss_value: calculations.totalDeposit
       })
@@ -537,7 +591,7 @@ export default function NewOrderViewWorkspace() {
         issue_time: issueTime,
         return_time: returnTime,
         items: items,
-        total_rent: calculations.rentAfterDiscount,
+        total_rent: calculations.rentAfterDiscount + additionalServicesTotal, // Для кошторису — повна сума
         total_deposit: calculations.totalDeposit,
         manager_notes: managerNotes
       })
@@ -737,6 +791,12 @@ export default function NewOrderViewWorkspace() {
     : customerStats?.total_orders > 3 ? 'regular' 
     : 'new'
   
+  // ✅ Footer - визначаємо чи показувати основну кнопку
+  // Статуси де замовлення вже в роботі - не показуємо "Відправити на збір"
+  // processing = на комплектації, preparation = готується (legacy), ready_for_issue = готово до видачі
+  const isInProgress = ['processing', 'preparation', 'ready_for_issue', 'issued', 'on_rent', 'partial_return', 'returning', 'completed'].includes(decorOrderStatus)
+  const showPrimaryAction = !isInProgress
+  
   // === РЕНДЕР ===
   return (
     <OrderWorkspaceLayout
@@ -775,10 +835,32 @@ export default function NewOrderViewWorkspace() {
             tier={clientTier}
             orderCount={customerStats?.total_orders}
           />
+          {/* Event Info для IT- замовлень */}
+          <ZoneEventInfo order={order} />
           <LeftRailFinance
             orderId={orderId}
             rentAmount={calculations.rentAfterDiscount}
             depositAmount={calculations.totalDeposit}
+            discountPercent={discount}
+            discountAmount={calculations.totalDiscount}
+            rentBeforeDiscount={calculations.totalRent}
+            serviceFee={order?.service_fee || 0}
+            serviceFeeName={order?.service_fee_name || ""}
+            onServiceFeeChange={async (fee, feeName) => {
+              try {
+                const token = localStorage.getItem('token')
+                await fetch(`${BACKEND_URL}/api/orders/${orderId}`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                  body: JSON.stringify({ service_fee: fee, service_fee_name: feeName })
+                })
+                // Оновити локальний стан
+                setOrder(prev => ({ ...prev, service_fee: fee, service_fee_name: feeName }))
+              } catch (err) {
+                console.error('Failed to update service fee:', err)
+              }
+            }}
+            isEditable={true}
           />
           <LeftRailDocuments
             orderId={orderId}
@@ -790,9 +872,8 @@ export default function NewOrderViewWorkspace() {
         </>
       }
       
-      // Footer
-      onPrimaryAction={decorOrderStatus ? handleSendToAssembly : handleAcceptOrder}
-      primaryLabel={decorOrderStatus ? '📦 Відправити на збір' : 'Підтвердити та прийняти'}
+      onPrimaryAction={showPrimaryAction ? (decorOrderStatus ? handleSendToAssembly : handleAcceptOrder) : null}
+      primaryLabel={showPrimaryAction ? (decorOrderStatus ? '📦 Відправити на збір' : 'Підтвердити та прийняти') : null}
       primaryDisabled={saving || !canAccept}
       primaryDisabledReason={!canAccept ? 'Заповніть дати та позиції' : ''}
       onSave={handleSave}
@@ -803,34 +884,46 @@ export default function NewOrderViewWorkspace() {
           onClick: handleSendEmail,
           disabled: sendingEmail || !clientEmail
         },
-        { 
+        ...(isInProgress ? [] : [{ 
           label: '🚫 Відхилити', 
           onClick: () => navigate('/'), 
           variant: 'danger' 
-        }
+        }])
       ]}
     >
       {/* === WORKSPACE ZONES === */}
       
-      {/* Клієнт */}
-      <ZoneClientForm
-        clientName={clientName}
-        clientPhone={clientPhone}
-        clientEmail={clientEmail}
-        clientType={clientType}
+      {/* Операційна */}
+      <ZoneOperational
+        orderId={orderId}
+        orderNumber={order?.order_number}
+        customerName={clientName}
         managerId={managerId}
         managerName={managerName}
-        discount={discount}
+        discountPercent={discount}
+        discountAmount={discountAmount}
+        serviceFee={serviceFee}
+        serviceFeeName={serviceFeeName}
+        totalBeforeDiscount={items.reduce((sum, item) => sum + (item.rental_price * item.qty * rentalDays), 0)}
+        totalRent={(() => {
+          const baseRent = calculations.rentAfterDiscount || 0;
+          return baseRent + additionalServicesTotal;
+        })()}
+        totalDeposit={order?.total_deposit || order?.deposit_amount || calculations.totalDeposit || 0}
+        paidRent={order?.paid_rent || 0}
+        paidDeposit={order?.paid_deposit || 0}
+        payments={order?.payments || []}
+        showPayment={decorOrderStatus && decorOrderStatus !== 'awaiting_customer'}
+        onPaymentSuccess={() => loadOrder()}
         onUpdate={(data) => {
-          setClientName(data.name)
-          setClientPhone(data.phone)
-          setClientEmail(data.email)
-          setClientType(data.type)
           setManagerId(data.managerId)
           setManagerName(data.managerName)
-          setDiscount(data.discount)
+          setDiscount(data.discountPercent)
+          setDiscountAmount(data.discountAmount)
+          setServiceFee(data.serviceFee)
+          setServiceFeeName(data.serviceFeeName)
         }}
-        readOnly={!!decorOrderStatus && decorOrderStatus !== 'awaiting_customer'}
+        readOnly={decorOrderStatus === 'completed' || decorOrderStatus === 'cancelled'}
       />
       
       {/* Дати */}

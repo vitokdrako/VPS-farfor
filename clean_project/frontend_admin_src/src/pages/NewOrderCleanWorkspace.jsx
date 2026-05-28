@@ -113,6 +113,7 @@ export default function NewOrderClean() {
     return {
       totalRent,
       discountAmount,
+      totalDiscount: discountAmount,
       rentAfterDiscount,
       estimatedDeposit,
       itemsCount: items.filter(i => i.name).length
@@ -268,6 +269,8 @@ export default function NewOrderClean() {
             orderId={null}
             rentAmount={calculations.rentAfterDiscount}
             depositAmount={calculations.estimatedDeposit}
+            discountPercent={discount}
+            discountAmount={calculations.totalDiscount}
           />
           <LeftRailTimeline orderId={null} events={events} />
           

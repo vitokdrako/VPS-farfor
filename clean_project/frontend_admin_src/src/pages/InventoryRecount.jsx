@@ -20,6 +20,8 @@ export default function InventoryRecount() {
   const [damageHistory, setDamageHistory] = useState([]) // Історія пошкоджень
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [damageModalOpen, setDamageModalOpen] = useState(false) // Для відкриття DamageModal
+  const [processingQty, setProcessingQty] = useState(1) // Кількість для обробки
+  const [sendingToProcessing, setSendingToProcessing] = useState(false)
 
   useEffect(() => {
     loadProduct()
@@ -103,6 +105,55 @@ export default function InventoryRecount() {
     await loadDamageHistory() // Оновити історію
     await saveRecount()
   }
+  
+  // Швидка дія - відправити на обробку
+  const handleQuickAction = async (actionType) => {
+    const qty = product.quantity > 1 ? processingQty : 1
+    const actionLabels = {
+      wash: 'мийку',
+      repair: 'реставрацію', 
+      laundry: 'хімчистку',
+      write_off: 'списання'
+    }
+    
+    const confirmMsg = actionType === 'write_off' 
+      ? `Списати ${qty} шт?\n\nЦю дію НЕ можна скасувати!`
+      : `Відправити ${qty} шт на ${actionLabels[actionType]}?\n\nТовар буде заморожено до завершення обробки.`
+    
+    if (!window.confirm(confirmMsg)) {
+      return
+    }
+    
+    try {
+      setSendingToProcessing(true)
+      
+      // Відправляємо на обробку через API
+      await axios.post(`${BACKEND_URL}/api/inventory/send-to-processing`, {
+        product_id: product.product_id,
+        sku: product.sku,
+        quantity: qty,
+        action_type: actionType,
+        notes: notes || `Відправлено з кабінету переобліку`,
+        source: 'reaudit'
+      })
+      
+      const successMsg = actionType === 'write_off'
+        ? `✅ ${qty} шт списано!`
+        : `✅ ${qty} шт відправлено на ${actionLabels[actionType]}!`
+      alert(successMsg)
+      
+      // Оновити дані товару
+      await loadProduct()
+      setProcessingQty(1)
+      
+    } catch (err) {
+      console.error('Error sending to processing:', err)
+      const errorMsg = err.response?.data?.detail || err.message || 'Невідома помилка'
+      alert(`❌ Помилка: ${errorMsg}`)
+    } finally {
+      setSendingToProcessing(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -120,7 +171,7 @@ export default function InventoryRecount() {
           <h2 className="text-xl font-semibold mb-2">Товар не знайдено</h2>
           <p className="text-corp-text-main mb-4">SKU: {sku}</p>
           <button 
-            onClick={() => navigate('/')}
+            onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/'))}
             className="px-4 py-2 bg-slate-800 text-white rounded-lg hover:bg-slate-700"
           >
             Повернутися
@@ -346,12 +397,93 @@ export default function InventoryRecount() {
               {saving ? 'Збереження...' : '💾 Зберегти переобік'}
             </button>
             <button
-              onClick={() => navigate('/')}
+              onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/'))}
               className="px-4 py-3 bg-slate-100 text-slate-700 rounded-lg font-medium hover:bg-slate-200"
             >
               Скасувати
             </button>
           </div>
+        </div>
+
+        {/* Quick Processing Actions */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 mb-4">
+          <h2 className="text-lg font-semibold mb-3">Швидкі дії</h2>
+          <p className="text-sm text-slate-500 mb-4">
+            Відправити товар напряму на обробку (заморозить {product.quantity > 1 ? 'вказану кількість' : 'товар'})
+          </p>
+          
+          {/* Quantity selector for multi-quantity items */}
+          {product.quantity > 1 && (
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-700 mb-2">
+                Кількість для обробки
+              </label>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => setProcessingQty(Math.max(1, processingQty - 1))}
+                  className="w-10 h-10 rounded-lg border border-slate-200 text-lg font-bold hover:bg-slate-50"
+                >
+                  −
+                </button>
+                <input 
+                  type="number" 
+                  value={processingQty}
+                  onChange={(e) => setProcessingQty(Math.min(product.quantity, Math.max(1, parseInt(e.target.value) || 1)))}
+                  className="w-20 h-10 text-center border border-slate-200 rounded-lg"
+                  min="1"
+                  max={product.quantity}
+                />
+                <button 
+                  onClick={() => setProcessingQty(Math.min(product.quantity, processingQty + 1))}
+                  className="w-10 h-10 rounded-lg border border-slate-200 text-lg font-bold hover:bg-slate-50"
+                >
+                  +
+                </button>
+                <span className="text-sm text-slate-500 ml-2">з {product.quantity} шт</span>
+              </div>
+            </div>
+          )}
+          
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => handleQuickAction('wash')}
+              disabled={sendingToProcessing}
+              className="p-4 rounded-xl border-2 border-blue-200 bg-blue-50 hover:bg-blue-100 hover:border-blue-300 transition-all disabled:opacity-50"
+            >
+              <div className="text-2xl mb-1">🧽</div>
+              <div className="text-sm font-medium text-blue-800">На мийку</div>
+            </button>
+            <button
+              onClick={() => handleQuickAction('repair')}
+              disabled={sendingToProcessing}
+              className="p-4 rounded-xl border-2 border-amber-200 bg-amber-50 hover:bg-amber-100 hover:border-amber-300 transition-all disabled:opacity-50"
+            >
+              <div className="text-2xl mb-1">🔧</div>
+              <div className="text-sm font-medium text-amber-800">На реставрацію</div>
+            </button>
+            <button
+              onClick={() => handleQuickAction('laundry')}
+              disabled={sendingToProcessing}
+              className="p-4 rounded-xl border-2 border-purple-200 bg-purple-50 hover:bg-purple-100 hover:border-purple-300 transition-all disabled:opacity-50"
+            >
+              <div className="text-2xl mb-1">👔</div>
+              <div className="text-sm font-medium text-purple-800">На хімчистку</div>
+            </button>
+            <button
+              onClick={() => handleQuickAction('write_off')}
+              disabled={sendingToProcessing}
+              className="p-4 rounded-xl border-2 border-red-200 bg-red-50 hover:bg-red-100 hover:border-red-300 transition-all disabled:opacity-50"
+            >
+              <div className="text-2xl mb-1">🗑️</div>
+              <div className="text-sm font-medium text-red-800">Списати</div>
+            </button>
+          </div>
+          
+          {sendingToProcessing && (
+            <div className="mt-3 text-center text-sm text-slate-500">
+              Відправляємо...
+            </div>
+          )}
         </div>
 
         {/* Quick Info */}

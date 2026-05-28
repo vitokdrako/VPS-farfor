@@ -127,7 +127,7 @@ function CompactReturnCard({ item, onSetReturnedQty, onToggleSerial, onOpenDamag
           
           {/* Локація */}
           {item.location?.zone && item.location.zone !== 'None' && (
-            <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">📍{item.location.zone}</span>
+            <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{item.location.zone}</span>
           )}
         </div>
       </div>
@@ -146,7 +146,7 @@ function CompactReturnCard({ item, onSetReturnedQty, onToggleSerial, onOpenDamag
           {photoUrl ? (
             <img src={photoUrl} alt="" className="w-full h-full object-cover" />
           ) : (
-            <div className="w-full h-full flex items-center justify-center text-slate-300 text-xs">📦</div>
+            <div className="w-full h-full flex items-center justify-center text-slate-300 text-xs">—</div>
           )}
         </div>
         
@@ -159,12 +159,25 @@ function CompactReturnCard({ item, onSetReturnedQty, onToggleSerial, onOpenDamag
           >
             −
           </button>
-          <div className={`
-            w-8 text-center text-sm font-bold
-            ${isFullyReturned ? 'text-emerald-600' : 'text-slate-800'}
-          `}>
-            {returnedQty}
-          </div>
+          <input
+            type="number"
+            value={returnedQty}
+            onChange={(e) => {
+              if (readOnly) return;
+              const v = Math.max(0, Math.min(rentedQty, parseInt(e.target.value) || 0));
+              onSetReturnedQty?.(item.id, v);
+            }}
+            disabled={readOnly}
+            className={`
+              w-10 h-8 text-center text-sm font-bold border border-slate-200 rounded-lg
+              [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none
+              ${isFullyReturned ? 'text-emerald-600' : 'text-slate-800'}
+              disabled:opacity-50
+            `}
+            min="0"
+            max={rentedQty}
+            data-testid={`return-qty-input-${item.id}`}
+          />
           <button 
             onClick={() => !readOnly && onSetReturnedQty?.(item.id, Math.min(rentedQty, returnedQty + 1))} 
             disabled={readOnly || returnedQty >= rentedQty}
@@ -211,19 +224,29 @@ function CompactReturnCard({ item, onSetReturnedQty, onToggleSerial, onOpenDamag
                 Історія пошкоджень ({damageHistory.length})
               </div>
               <div className="text-[10px] text-red-600 mb-1.5">
-                ⚠️ Перевірте ці дефекти перед прийманням
+                Перевірте ці дефекти перед прийманням
               </div>
               <div className="space-y-1.5 max-h-[150px] overflow-y-auto">
-                {damageHistory.slice(0, 5).map((d, idx) => (
+                {damageHistory.slice(0, 5).map((d, idx) => {
+                  const getFullPhotoUrl = (url) => {
+                    if (!url) return null;
+                    if (url.startsWith('http')) return url;
+                    const base = BACKEND_URL.endsWith('/') ? BACKEND_URL.slice(0, -1) : BACKEND_URL;
+                    const cleanPath = url.startsWith('/') ? url : `/${url}`;
+                    return `${base}${cleanPath}`;
+                  };
+                  const photoUrl = getFullPhotoUrl(d.photo_url);
+                  
+                  return (
                   <div key={d.id || idx} className="flex items-start gap-2 text-[10px] bg-white rounded p-1.5 border border-red-100">
-                    {d.photo_url && (
+                    {photoUrl && (
                       <img 
-                        src={d.photo_url.startsWith('http') ? d.photo_url : `${BACKEND_URL}${d.photo_url}`} 
+                        src={photoUrl} 
                         alt="" 
                         className="w-10 h-10 rounded object-cover flex-shrink-0 cursor-pointer border-2 border-red-200 hover:border-red-400"
                         onClick={(e) => { 
                           e.stopPropagation()
-                          setShowDamagePhoto(d.photo_url.startsWith('http') ? d.photo_url : `${BACKEND_URL}${d.photo_url}`)
+                          setShowDamagePhoto(photoUrl)
                         }}
                       />
                     )}
@@ -236,14 +259,22 @@ function CompactReturnCard({ item, onSetReturnedQty, onToggleSerial, onOpenDamag
                           {d.stage_label || (d.stage === 'pre_issue' ? 'До видачі' : d.stage === 'return' ? 'Повернення' : 'Аудит')}
                         </span>
                         {d.order_number && <span className="text-slate-400">#{d.order_number}</span>}
-                        {d.fee > 0 && <span className="text-red-600">₴{d.fee}</span>}
+                        {(d.qty || 1) > 1 && <span className="font-bold text-slate-700">{d.qty} шт</span>}
+                        {d.fee > 0 && <span className="text-red-600 font-medium">₴{d.fee}</span>}
                       </div>
-                      <div className="font-medium text-slate-700">{d.damage_type || d.type}</div>
+                      <div className="font-medium text-slate-700">
+                        {d.damage_type || d.type}
+                        {(d.qty || 1) > 1 && d.fee > 0 && (
+                          <span className="text-slate-400 font-normal ml-1">
+                            ({d.qty} шт × ₴{Math.round(d.fee / d.qty)}/шт)
+                          </span>
+                        )}
+                      </div>
                       {d.note && <div className="text-slate-500 truncate">{d.note}</div>}
                       <div className="text-slate-400">{d.created_at}</div>
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
               {damageHistory.length > 5 && (
                 <div className="text-center text-[10px] text-red-600 mt-1">
@@ -259,12 +290,42 @@ function CompactReturnCard({ item, onSetReturnedQty, onToggleSerial, onOpenDamag
               <div className="text-xs text-amber-700 font-medium mb-1">Зафіксовані пошкодження:</div>
               {findings.map((f, idx) => (
                 <div key={idx} className="text-[11px] text-amber-800">
-                  • {f.category || f.type} - {f.kind || f.description} {f.fee > 0 && `(₴${f.fee})`}
+                  • {f.category || f.type} - {f.kind || f.description}
+                  {(f.qty || 1) > 1 && <span className="font-bold ml-1">{f.qty} шт</span>}
+                  {f.fee > 0 && (
+                    <span className="ml-1">
+                      (₴{f.fee}
+                      {(f.qty || 1) > 1 && ` = ${f.qty} шт × ₴${Math.round(f.fee / f.qty)}/шт`}
+                      )
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
           )}
           
+          {/* Issued Packaging per item */}
+          {item.issued_packaging && Object.keys(item.issued_packaging).filter(k => k !== 'other_text').some(k => (parseInt(item.issued_packaging[k]) || 0) > 0) && (
+            <div className="rounded-lg bg-blue-50 border border-blue-200 p-2">
+              <div className="text-[10px] text-blue-600 font-semibold mb-1 flex items-center gap-1">
+                <Package className="w-3 h-3" /> Видано пакування:
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { key: 'native_cover', label: 'Чохол' },
+                  { key: 'native_box', label: 'Коробка' },
+                  { key: 'felt', label: 'Войлок' },
+                  { key: 'special', label: 'Спец.' },
+                  { key: 'other', label: item.issued_packaging?.other_text || 'Інше' },
+                ].filter(o => (parseInt(item.issued_packaging?.[o.key]) || 0) > 0).map(o => (
+                  <span key={o.key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 text-[10px] font-medium">
+                    {o.label}: {item.issued_packaging[o.key]}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Serials */}
           {serials.length > 0 && (
             <div>

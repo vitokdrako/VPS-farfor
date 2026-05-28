@@ -1,10 +1,21 @@
 /* eslint-disable */
 /**
- * Finance Hub 2.0 - Уніфікований фінансовий центр
- * Всі 4 вкладки в одному вікні з реальними даними
+ * Finance Hub 2.0 - Уніфікований фінансовий центр з вкладками
+ * 
+ * Вкладки:
+ * 1. Операції - головна (OrderList + OrderFinancePanel)
+ * 2. Документи - центр документів
+ * 3. Каси - баланси + зведення
+ * 4. План надходжень - прогноз
+ * 5. Витрати - категорії витрат
+ * 6. Депозити - глобальний список
+ * 7. Аналітика - звіти
  */
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import CorporateHeader from "../components/CorporateHeader";
+import { DocumentPreviewModal } from "../components/DocumentPreviewModal";
+import { SignatureModal } from "../components/SignatureCanvas";
+import ClientsTab from "../components/ClientsTab";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 
@@ -25,6 +36,13 @@ const fmtDate = (iso) => {
   return d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 };
 
+const fmtDateShort = (iso) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit" });
+};
+
 const authFetch = async (url, options = {}) => {
   const token = localStorage.getItem("token");
   return fetch(url, {
@@ -43,13 +61,14 @@ const Badge = ({ kind, children }) => (
     "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
     kind === "ok" && "bg-emerald-50 text-emerald-700 border border-emerald-100",
     kind === "pending" && "bg-amber-50 text-amber-700 border border-amber-100",
-    kind === "warn" && "bg-rose-50 text-rose-700 border border-rose-100"
+    kind === "warn" && "bg-rose-50 text-rose-700 border border-rose-100",
+    kind === "info" && "bg-blue-50 text-blue-700 border border-blue-100"
   )}>
     {children}
   </span>
 );
 
-const Card = ({ title, right, children, className }) => (
+const Card = ({ title, right, children, className, noPadding }) => (
   <div className={cn("rounded-2xl border border-slate-200 bg-white shadow-sm", className)}>
     {(title || right) && (
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
@@ -57,17 +76,7 @@ const Card = ({ title, right, children, className }) => (
         <div>{right}</div>
       </div>
     )}
-    <div className="p-4">{children}</div>
-  </div>
-);
-
-const StatRow = ({ label, value, sub }) => (
-  <div className="flex items-baseline justify-between gap-3 py-2">
-    <div className="text-sm text-slate-600">{label}</div>
-    <div className="text-right">
-      <div className="text-sm font-semibold text-slate-900">{value}</div>
-      {sub && <div className="text-xs text-slate-500">{sub}</div>}
-    </div>
+    <div className={noPadding ? "" : "p-4"}>{children}</div>
   </div>
 );
 
@@ -118,15 +127,21 @@ const Input = (props) => (
   />
 );
 
-const Button = ({ children, variant = "primary", ...props }) => (
+const Button = ({ children, variant = "primary", size = "md", ...props }) => (
   <button
     {...props}
     className={cn(
-      "h-10 rounded-xl px-4 text-sm font-semibold transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed",
+      "rounded-xl font-semibold transition active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed",
+      size === "sm" && "h-8 px-3 text-xs",
+      size === "md" && "h-10 px-4 text-sm",
+      size === "lg" && "h-12 px-6 text-base",
       variant === "primary" && "bg-slate-900 text-white hover:bg-slate-800",
       variant === "ghost" && "bg-white text-slate-700 border border-slate-200 hover:bg-slate-50",
       variant === "warn" && "bg-amber-500 text-white hover:bg-amber-600",
       variant === "danger" && "bg-rose-500 text-white hover:bg-rose-600",
+      variant === "success" && "bg-emerald-500 text-white hover:bg-emerald-600",
+      variant === "deposit" && "bg-blue-500 text-white hover:bg-blue-600",
+      variant === "advance" && "bg-violet-500 text-white hover:bg-violet-600",
       props.className
     )}
   >
@@ -134,359 +149,419 @@ const Button = ({ children, variant = "primary", ...props }) => (
   </button>
 );
 
+// Tab Button Component
+const TabButton = ({ active, onClick, children, icon }) => (
+  <button
+    onClick={onClick}
+    className={cn(
+      "flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-xl transition whitespace-nowrap",
+      active 
+        ? "bg-slate-900 text-white" 
+        : "bg-white text-slate-600 hover:bg-slate-100 border border-slate-200"
+    )}
+  >
+    {icon && <span className="text-base">{icon}</span>}
+    {children}
+  </button>
+);
+
 // ===== MAIN COMPONENT =====
 export default function FinanceHub() {
+  console.log("[FinanceHub] Component rendering...");
+  
+  // === GLOBAL STATE ===
+  const [activeTab, setActiveTab] = useState("operations");
   const [month, setMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
-  const [activeTabMobile, setActiveTabMobile] = useState("order");
   
   // Data states
   const [orders, setOrders] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState(null);
+  const [orderSnapshot, setOrderSnapshot] = useState(null);
   const [deposits, setDeposits] = useState([]);
   const [payoutsStats, setPayoutsStats] = useState(null);
   const [payments, setPayments] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [damageFees, setDamageFees] = useState({ total_fee: 0, paid_amount: 0, due_amount: 0, items: [] });
   const [lateFeeData, setLateFeeData] = useState({ total: 0, paid: 0, due: 0, items: [] });
-  const [estimatedLateFee, setEstimatedLateFee] = useState(0); // Орієнтовна сума прострочення
+  const [allExpenses, setAllExpenses] = useState([]);
+  const [payerProfiles, setPayerProfiles] = useState([]);
+  const [selectedPayerProfile, setSelectedPayerProfile] = useState(null);
+  const [orderPayerOptions, setOrderPayerOptions] = useState(null); // Payer options for selected order
+  const [matchedClient, setMatchedClient] = useState(null); // Auto-matched client for order
+  const [clientPayers, setClientPayers] = useState([]); // Payers linked to matched client
+  const [selectedClientPayer, setSelectedClientPayer] = useState(null); // Selected payer for documents
+  const [clientSearching, setClientSearching] = useState(false);
   
-  // Damage and late fee payment form states
-  const [damagePayAmount, setDamagePayAmount] = useState("");
-  const [newDamageAmount, setNewDamageAmount] = useState("");
-  const [newDamageNote, setNewDamageNote] = useState("");
-  const [newLateAmount, setNewLateAmount] = useState("");
-  const [newLateNote, setNewLateNote] = useState("");
-  
-  // Loading states
+  // Loading/UI states
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  
-  // Search
   const [searchQuery, setSearchQuery] = useState("");
-  
-  // Payment form
-  const [payType, setPayType] = useState("rent");
-  const [method, setMethod] = useState("cash");
-  const [amount, setAmount] = useState("");
-  const [additionalName, setAdditionalName] = useState("");
-  const [depositCurrency, setDepositCurrency] = useState("UAH");
-  
-  // Expense modals
-  const [showExpenseModal, setShowExpenseModal] = useState(false);
-  const [expenseType, setExpenseType] = useState("rent_cash"); // "rent_cash", "damage_cash", "rent_bank", "damage_bank"
-  const [operationType, setOperationType] = useState("expense"); // "expense" or "deposit"
-  const [expenseAmount, setExpenseAmount] = useState("");
-  const [expenseDescription, setExpenseDescription] = useState("");
-  
-  // All operations modal
-  const [showOperationsModal, setShowOperationsModal] = useState(false);
-  const [allExpenses, setAllExpenses] = useState([]);
   
   // Get current user
   const getUser = () => JSON.parse(localStorage.getItem("user") || "{}");
   
   // ===== DATA LOADING =====
   const loadOrders = useCallback(async () => {
+    console.log("[FinanceHub] loadOrders called");
     try {
-      const res = await authFetch(`${BACKEND_URL}/api/manager/finance/orders-with-finance?limit=100`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      
+      const res = await authFetch(`${BACKEND_URL}/api/manager/finance/orders-with-finance?limit=100`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      
+      console.log("[FinanceHub] loadOrders response status:", res.status);
       const data = await res.json();
+      console.log("[FinanceHub] loadOrders response:", data.orders?.length);
       setOrders(data.orders || []);
-      // Auto-select first order
-      if (data.orders?.length > 0 && !selectedOrderId) {
-        setSelectedOrderId(data.orders[0].order_id);
+      if (data.orders?.length > 0) {
+        setSelectedOrderId(prev => prev || data.orders[0].order_id);
       }
     } catch (e) {
-      console.error("Load orders error:", e);
+      console.error("Load orders error:", e.name, e.message);
     }
-  }, [selectedOrderId]);
+  }, []);
   
   const loadDeposits = useCallback(async () => {
+    console.log("[FinanceHub] loadDeposits called");
     try {
-      const res = await authFetch(`${BACKEND_URL}/api/finance/deposits`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      
+      const res = await authFetch(`${BACKEND_URL}/api/finance/deposits`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      
+      console.log("[FinanceHub] loadDeposits response status:", res.status);
       const data = await res.json();
+      console.log("[FinanceHub] loadDeposits response:", Array.isArray(data) ? data.length : 0);
       setDeposits(Array.isArray(data) ? data : []);
     } catch (e) {
-      console.error("Load deposits error:", e);
+      console.error("Load deposits error:", e.name, e.message);
     }
   }, []);
   
   const loadPayoutsStats = useCallback(async () => {
+    console.log("[FinanceHub] loadPayoutsStats called");
     try {
-      const res = await authFetch(`${BACKEND_URL}/api/finance/payouts-stats`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      
+      const res = await authFetch(`${BACKEND_URL}/api/finance/payouts-stats-v2`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      
+      console.log("[FinanceHub] loadPayoutsStats response status:", res.status);
       const data = await res.json();
+      console.log("[FinanceHub] loadPayoutsStats response:", data?.total_cash_balance);
       setPayoutsStats(data);
     } catch (e) {
-      console.error("Load stats error:", e);
+      console.error("Load stats error:", e.name, e.message);
     }
   }, []);
   
-  const loadPayments = useCallback(async (orderId) => {
+  const loadOrderSnapshot = useCallback(async (orderId) => {
     if (!orderId) return;
     try {
-      const res = await authFetch(`${BACKEND_URL}/api/finance/payments?order_id=${orderId}&limit=50`);
+      const res = await authFetch(`${BACKEND_URL}/api/finance/orders/${orderId}/snapshot`);
       const data = await res.json();
-      setPayments(data.payments || []);
-    } catch (e) {
-      console.error("Load payments error:", e);
-    }
-  }, []);
-  
-  const loadDocuments = useCallback(async (orderId) => {
-    if (!orderId) return;
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/documents/entity/order/${orderId}`);
-      const data = await res.json();
-      setDocuments(data.documents || []);
-    } catch (e) {
-      console.error("Load documents error:", e);
-    }
-  }, []);
-  
-  const loadDamageFees = useCallback(async (orderId) => {
-    if (!orderId) return;
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/analytics/order-damage-fee/${orderId}`);
-      const data = await res.json();
-      setDamageFees({
-        total_fee: data.total_damage_fee || 0,
-        paid_amount: data.paid_damage || 0,
-        due_amount: data.due_amount || 0,
-        items: data.damage_items || []
-      });
-    } catch (e) {
-      console.error("Load damage fees error:", e);
-      setDamageFees({ total_fee: 0, paid_amount: 0, due_amount: 0, items: [] });
-    }
-  }, []);
-  
-  // Load late fees (прострочення) for order - тепер з версій повернення
-  const loadLateFees = useCallback(async (orderId) => {
-    if (!orderId) return;
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/finance/order/${orderId}/charges`);
-      const data = await res.json();
-      setLateFeeData({
-        total: (data.late?.due || 0) + (data.late?.paid || 0),
-        paid: data.late?.paid || 0,
-        due: data.late?.due || 0,
-        items: data.late?.items || []
-      });
-      
-      // ✅ Завантажуємо орієнтовну суму з НОВОЇ системи версій
-      try {
-        const versionsRes = await authFetch(`${BACKEND_URL}/api/return-versions/order/${orderId}/versions`);
-        const versionsData = await versionsRes.json();
-        
-        if (versionsData.versions?.length > 0) {
-          // Підсумувати calculated_total_fee з активних версій
-          const activeVersions = versionsData.versions.filter(v => v.status === 'active');
-          const totalEstimated = activeVersions.reduce((sum, v) => sum + (v.manager_fee || 0), 0);
-          
-          // Якщо ще не нараховано - показати розрахунок
-          const pendingVersions = versionsData.versions.filter(v => v.fee_status === 'pending');
-          if (pendingVersions.length > 0) {
-            // Отримуємо розрахункові суми через детальний API
-            let estimated = 0;
-            for (const v of pendingVersions) {
-              try {
-                const vRes = await authFetch(`${BACKEND_URL}/api/return-versions/${v.id}`);
-                const vData = await vRes.json();
-                estimated += vData.calculated_total_fee || 0;
-              } catch (e) {
-                // ignore
-              }
-            }
-            setEstimatedLateFee(estimated);
-          } else {
-            setEstimatedLateFee(0);
-          }
-        } else {
-          // Fallback до старої системи
-          const extRes = await authFetch(`${BACKEND_URL}/api/partial-returns/order/${orderId}/extension-summary`);
-          const extData = await extRes.json();
-          const estimated = (extData.active?.total_charged || 0) + (extData.completed?.total_charged || 0);
-          setEstimatedLateFee(estimated);
-        }
-      } catch (e) {
-        setEstimatedLateFee(0);
+      if (data.order_id) {
+        setOrderSnapshot(data);
+        setPayments(data.payments || []);
+        setDocuments(data.documents || []);
+        setDamageFees({
+          total_fee: data.damage?.total || 0,
+          paid_amount: data.damage?.paid || 0,
+          due_amount: data.damage?.due || 0,
+          items: data.damage?.items || []
+        });
+        setLateFeeData({
+          total: data.late?.total || 0,
+          paid: data.late?.paid || 0,
+          due: data.late?.due || 0,
+          items: data.late?.items || []
+        });
+        setSelectedPayerProfile(data.payer_profile || null);
       }
     } catch (e) {
-      console.error("Load late fees error:", e);
-      setLateFeeData({ total: 0, paid: 0, due: 0, items: [] });
-      setEstimatedLateFee(0);
+      console.error("Load snapshot error:", e);
     }
   }, []);
+  
+  const loadAllExpenses = useCallback(async () => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/api/finance/expenses/all?limit=200`);
+      const data = await res.json();
+      setAllExpenses(data.expenses || []);
+    } catch (e) {
+      console.error("Load expenses error:", e);
+    }
+  }, []);
+  
+  const loadPayerProfiles = useCallback(async () => {
+    console.log("[FinanceHub] loadPayerProfiles called");
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      
+      const res = await authFetch(`${BACKEND_URL}/api/payer-profiles`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      
+      console.log("[FinanceHub] loadPayerProfiles response status:", res.status);
+      const data = await res.json();
+      console.log("[FinanceHub] loadPayerProfiles response:", data.profiles?.length);
+      setPayerProfiles(data.profiles || []);
+    } catch (e) {
+      console.error("Load payer profiles error:", e.name, e.message);
+    }
+  }, []);
+  
+  // Load payer options for selected order
+  const loadOrderPayerOptions = useCallback(async (orderId) => {
+    if (!orderId) {
+      setOrderPayerOptions(null);
+      return;
+    }
+    try {
+      const res = await authFetch(`${BACKEND_URL}/api/orders/${orderId}/payer-options`);
+      if (res.ok) {
+        const data = await res.json();
+        setOrderPayerOptions(data);
+      }
+    } catch (e) {
+      console.error("Load order payer options error:", e);
+    }
+  }, []);
+  
+  // Set payer for order
+  const setOrderPayer = useCallback(async (orderId, payerId) => {
+    try {
+      setSaving(true);
+      const res = await authFetch(`${BACKEND_URL}/api/orders/${orderId}/set-payer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payer_profile_id: payerId })
+      });
+      if (res.ok) {
+        await loadOrderPayerOptions(orderId);
+        await loadOrders();
+      } else {
+        const err = await res.json();
+        alert(`❌ Помилка: ${err.detail || 'Невідома помилка'}`);
+      }
+    } catch (e) {
+      console.error("Set order payer error:", e);
+      alert("❌ Помилка встановлення платника");
+    } finally {
+      setSaving(false);
+    }
+  }, [loadOrderPayerOptions, loadOrders]);
+  
+  // Auto-search for client by order's customer name/phone
+  const searchClientForOrder = useCallback(async (order) => {
+    if (!order) {
+      setMatchedClient(null);
+      setClientPayers([]);
+      setSelectedClientPayer(null);
+      return;
+    }
+    
+    // If order already has client_user_id, load that client
+    if (order.client_user_id) {
+      try {
+        const res = await authFetch(`${BACKEND_URL}/api/clients/${order.client_user_id}`);
+        if (res.ok) {
+          const client = await res.json();
+          // Also get MA status
+          const maRes = await authFetch(`${BACKEND_URL}/api/agreements/client/${order.client_user_id}`);
+          const maData = await maRes.json();
+          
+          // Load client payers
+          const payersRes = await authFetch(`${BACKEND_URL}/api/clients/${order.client_user_id}/payers`);
+          const payersData = payersRes.ok ? await payersRes.json() : [];
+          setClientPayers(payersData);
+          
+          // Auto-select default payer or first payer
+          const defaultPayer = payersData.find(p => p.is_default) || payersData[0];
+          setSelectedClientPayer(defaultPayer || null);
+          
+          setMatchedClient({
+            ...client,
+            has_agreement: maData.exists,
+            agreement_status: maData.status,
+            agreement_number: maData.contract_number,
+            agreement_id: maData.id
+          });
+        }
+      } catch (e) {
+        console.error("Load client error:", e);
+      }
+      return;
+    }
+    
+    // Search by name/phone
+    const name = order.client_name || order.customer_name;
+    const phone = order.client_phone || order.customer_phone;
+    
+    if (!name && !phone) {
+      setMatchedClient(null);
+      setClientPayers([]);
+      setSelectedClientPayer(null);
+      return;
+    }
+    
+    setClientSearching(true);
+    try {
+      const params = new URLSearchParams();
+      if (name) params.append("name", name);
+      if (phone) params.append("phone", phone);
+      
+      const res = await authFetch(`${BACKEND_URL}/api/clients/find-match?${params}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.found && data.best_match) {
+          setMatchedClient(data.best_match);
+          
+          // Load payers for matched client
+          if (data.best_match.id) {
+            const payersRes = await authFetch(`${BACKEND_URL}/api/clients/${data.best_match.id}/payers`);
+            const payersData = payersRes.ok ? await payersRes.json() : [];
+            setClientPayers(payersData);
+            const defaultPayer = payersData.find(p => p.is_default) || payersData[0];
+            setSelectedClientPayer(defaultPayer || null);
+          }
+        } else {
+          // No match - show "new client" option
+          setMatchedClient({
+            is_new: true,
+            suggested_name: name,
+            suggested_phone: phone
+          });
+          setClientPayers([]);
+          setSelectedClientPayer(null);
+        }
+      }
+    } catch (e) {
+      console.error("Search client error:", e);
+    } finally {
+      setClientSearching(false);
+    }
+  }, []);
+  
+  // Link order to client
+  const linkOrderToClient = useCallback(async (orderId, clientId) => {
+    try {
+      setSaving(true);
+      const res = await authFetch(`${BACKEND_URL}/api/orders/${orderId}/link-client`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_user_id: clientId })
+      });
+      if (res.ok) {
+        await loadOrders();
+        // Re-search to update matched client
+        const order = orders.find(o => o.order_id === orderId);
+        if (order) {
+          searchClientForOrder({ ...order, client_user_id: clientId });
+        }
+      } else {
+        const err = await res.json();
+        alert(`❌ Помилка: ${err.detail || 'Невідома помилка'}`);
+      }
+    } catch (e) {
+      console.error("Link client error:", e);
+    } finally {
+      setSaving(false);
+    }
+  }, [loadOrders, orders, searchClientForOrder]);
   
   // Initial load
   useEffect(() => {
+    console.log("[FinanceHub] Initial load starting...");
+    let isMounted = true;
+    
     const loadAll = async () => {
+      if (!isMounted) return;
       setLoading(true);
-      await Promise.all([loadOrders(), loadDeposits(), loadPayoutsStats()]);
-      setLoading(false);
+      try {
+        console.log("[FinanceHub] Loading data...");
+        
+        // Load all in parallel for speed
+        const results = await Promise.allSettled([
+          loadOrders(),
+          loadDeposits(),
+          loadPayoutsStats(),
+          loadPayerProfiles()
+        ]);
+        
+        // Log any failures
+        results.forEach((result, idx) => {
+          if (result.status === 'rejected') {
+            console.error(`[FinanceHub] Load ${idx} failed:`, result.reason);
+          }
+        });
+        
+        console.log("[FinanceHub] Data loaded successfully");
+      } catch (e) {
+        console.error("[FinanceHub] Load error:", e);
+      } finally {
+        // Always set loading to false when done
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
     };
+    
     loadAll();
+    
+    return () => { isMounted = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   
-  // Load order-specific data when selection changes
+  // Load order snapshot when selection changes
   useEffect(() => {
     if (selectedOrderId) {
-      loadPayments(selectedOrderId);
-      loadDocuments(selectedOrderId);
-      loadDamageFees(selectedOrderId);
-      loadLateFees(selectedOrderId);
-      loadOrderPayer(selectedOrderId);
+      loadOrderSnapshot(selectedOrderId);
+      loadOrderPayerOptions(selectedOrderId);
+      // Auto-search client for the selected order
+      const order = orders.find(o => o.order_id === selectedOrderId);
+      if (order) {
+        searchClientForOrder(order);
+      }
+    } else {
+      setMatchedClient(null);
     }
-  }, [selectedOrderId]);
+  }, [selectedOrderId, loadOrderSnapshot, loadOrderPayerOptions, orders, searchClientForOrder]);
   
-  // Load payer profiles on mount
+  // Load expenses when tab changes to expenses
   useEffect(() => {
-    loadPayerProfiles();
-  }, []);
+    if (activeTab === "expenses") {
+      loadAllExpenses();
+    }
+  }, [activeTab, loadAllExpenses]);
   
-  // Refresh all data
+  // Refresh all
   const refreshAll = useCallback(async () => {
     await Promise.all([
       loadOrders(),
       loadDeposits(),
       loadPayoutsStats(),
-      selectedOrderId && loadPayments(selectedOrderId),
-      selectedOrderId && loadDamageFees(selectedOrderId),
-      selectedOrderId && loadLateFees(selectedOrderId)
+      selectedOrderId && loadOrderSnapshot(selectedOrderId)
     ]);
-  }, [selectedOrderId]);
+  }, [selectedOrderId, loadOrderSnapshot]);
   
-  // Load all expenses for modal
-  const loadAllExpenses = useCallback(async () => {
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/finance/expenses/all?limit=100`);
-      const data = await res.json();
-      setAllExpenses(data.expenses || []);
-    } catch (e) {
-      console.error("Load expenses error:", e);
-      setAllExpenses([]);
-    }
-  }, []);
-  
-  // Add expense
-  const handleAddExpense = async () => {
-    if (!expenseAmount || Number(expenseAmount) <= 0 || !expenseDescription.trim()) return;
-    
-    setSaving(true);
-    const user = getUser();
-    
-    try {
-      await authFetch(`${BACKEND_URL}/api/finance/expenses/simple`, {
-        method: "POST",
-        body: JSON.stringify({
-          amount: Number(expenseAmount),
-          description: expenseDescription,
-          category: expenseType, // "rent_cash", "damage_cash", "rent_bank", "damage_bank"
-          operation_type: operationType, // "expense" or "deposit"
-          created_by_id: user.id,
-          created_by_name: user.email,
-        }),
-      });
-      
-      setExpenseAmount("");
-      setExpenseDescription("");
-      setShowExpenseModal(false);
-      await loadPayoutsStats();
-    } catch (e) {
-      console.error("Add expense error:", e);
-      alert("Помилка: " + e.message);
-    }
-    setSaving(false);
-  };
-  
-  // ===== SELECTED ORDER DATA =====
+  // ===== COMPUTED VALUES =====
   const selectedOrder = useMemo(() => {
     return orders.find(o => o.order_id === selectedOrderId) || null;
   }, [orders, selectedOrderId]);
   
   const orderDeposit = useMemo(() => {
     if (!selectedOrderId) return null;
+    if (orderSnapshot?.deposit) return orderSnapshot.deposit;
     return deposits.find(d => d.order_id === selectedOrderId) || null;
-  }, [deposits, selectedOrderId]);
+  }, [deposits, selectedOrderId, orderSnapshot]);
   
-  // Build timeline from payments
-  const timeline = useMemo(() => {
-    const items = [];
-    
-    // Add payments to timeline
-    payments.forEach(p => {
-      const typeLabels = {
-        rent: "Оренда",
-        additional: "Донарахування",
-        damage: "Шкода",
-        deposit: "Застава прийнята"
-      };
-      const methodLabels = { cash: "готівка", bank: "безготівка" };
-      
-      items.push({
-        id: `p_${p.id}`,
-        at: fmtDate(p.occurred_at),
-        status: "done",
-        label: p.note || typeLabels[p.payment_type] || p.payment_type,
-        amount: money(p.amount),
-        meta: `${methodLabels[p.method] || p.method}${p.accepted_by_name ? ` · ${p.accepted_by_name}` : ""}`
-      });
-    });
-    
-    // Add deposit operations to timeline
-    if (orderDeposit) {
-      const currencySymbol = orderDeposit.currency === "USD" ? "$" : orderDeposit.currency === "EUR" ? "€" : "₴";
-      
-      // Утримання із застави
-      if (orderDeposit.used_amount > 0 || orderDeposit.used_amount_original > 0) {
-        const usedAmount = orderDeposit.used_amount_original || orderDeposit.used_amount;
-        items.push({
-          id: "deposit_used",
-          at: fmtDate(orderDeposit.closed_at || new Date().toISOString()),
-          status: "warn",
-          label: "Утримано із застави",
-          amount: `-${currencySymbol}${usedAmount.toLocaleString("uk-UA")}`,
-          meta: "компенсація шкоди"
-        });
-      }
-      
-      // Повернення застави
-      if (orderDeposit.refunded_amount > 0 || orderDeposit.refunded_amount_original > 0) {
-        const refundedAmount = orderDeposit.refunded_amount_original || orderDeposit.refunded_amount;
-        items.push({
-          id: "deposit_refunded",
-          at: fmtDate(orderDeposit.closed_at || new Date().toISOString()),
-          status: "done",
-          label: "Застава повернута",
-          amount: `${currencySymbol}${refundedAmount.toLocaleString("uk-UA")}`,
-          meta: orderDeposit.status === "refunded" ? "закрито" : ""
-        });
-      }
-    }
-    
-    // Add pending damage
-    if (damageFees.due > 0) {
-      items.push({
-        id: "damage_due",
-        at: "Очікує",
-        status: "warn",
-        label: "Шкода (не сплачено)",
-        amount: money(damageFees.due),
-        meta: damageFees.items.map(d => d.product_name).join(", ")
-      });
-    }
-    
-    // Sort by date (newest first)
-    return items.sort((a, b) => {
-      if (a.at === "Очікує") return -1;
-      if (b.at === "Очікує") return 1;
-      return 0;
-    });
-  }, [payments, damageFees, orderDeposit]);
-  
-  // Filter orders by search
   const filteredOrders = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
     if (!q) return orders;
@@ -497,268 +572,178 @@ export default function FinanceHub() {
     );
   }, [orders, searchQuery]);
   
-  // Get order badge
-  const getOrderBadge = (order) => {
-    const rentDue = Math.max(0, (order.total_rental || 0) - (order.rent_paid || 0));
-    const hasDamage = (order.damage_due || 0) > 0;
-    
-    if (hasDamage) return { kind: "warn", text: `⚠️ ${money(order.damage_due)}` };
-    if (rentDue > 0) return { kind: "pending", text: `⏳ ${money(rentDue)}` };
-    return { kind: "ok", text: "✓ OK" };
-  };
-  
-  // ===== PAYMENT ACTIONS =====
-  const handlePayment = async () => {
-    if (!selectedOrderId || !amount || Number(amount) <= 0) return;
-    if (payType === "additional" && !additionalName.trim()) return;
-    
-    setSaving(true);
-    const user = getUser();
-    
-    try {
-      if (payType === "deposit_in") {
-        // Accept deposit
-        const rate = depositCurrency === "USD" ? 41.5 : depositCurrency === "EUR" ? 45.2 : 1;
-        await authFetch(`${BACKEND_URL}/api/finance/deposits/create`, {
-          method: "POST",
-          body: JSON.stringify({
-            order_id: selectedOrderId,
-            expected_amount: selectedOrder?.total_deposit || 0,
-            actual_amount: Number(amount),
-            currency: depositCurrency,
-            exchange_rate: rate,
-            held_amount: depositCurrency === "UAH" ? Number(amount) : Number(amount) * rate,
-            method,
-            accepted_by_id: user.id,
-            accepted_by_name: user.email,
-          }),
-        });
-      } else if (payType === "deposit_out" && orderDeposit) {
-        // Refund deposit
-        const available = (orderDeposit.held_amount || 0) - (orderDeposit.used_amount || 0) - (orderDeposit.refunded_amount || 0);
-        const refundAmount = Math.min(Number(amount), available);
-        await authFetch(`${BACKEND_URL}/api/finance/deposits/${orderDeposit.id}/refund?amount=${refundAmount}&method=${method}`, {
-          method: "POST",
-        });
-      } else if (payType === "deposit_use" && orderDeposit) {
-        // Use deposit for damage
-        await authFetch(`${BACKEND_URL}/api/finance/deposits/${orderDeposit.id}/use?amount=${Number(amount)}`, {
-          method: "POST",
-          body: JSON.stringify({ note: "Утримання за шкоду" }),
-        });
-      } else {
-        // Regular payment (rent, additional, damage)
-        await authFetch(`${BACKEND_URL}/api/finance/payments`, {
-          method: "POST",
-          body: JSON.stringify({
-            payment_type: payType,
-            method,
-            amount: Number(amount),
-            order_id: selectedOrderId,
-            accepted_by_id: user.id,
-            accepted_by_name: user.email,
-            note: payType === "additional" ? additionalName : undefined,
-          }),
-        });
-      }
-      
-      // Reset form and refresh
-      setAmount("");
-      setAdditionalName("");
-      await refreshAll();
-    } catch (e) {
-      console.error("Payment error:", e);
-      alert("Помилка: " + e.message);
-    }
-    setSaving(false);
-  };
-  
-  // ===== DOCUMENT ACTIONS =====
-  const generateDocument = async (docType) => {
-    if (!selectedOrderId) return;
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/documents/generate`, {
-        method: "POST",
-        body: JSON.stringify({
-          doc_type: docType,
-          entity_id: String(selectedOrderId),
-          format: "html"
-        })
-      });
-      const data = await res.json();
-      if (data.success && data.html_content) {
-        const win = window.open("", "_blank");
-        win.document.write(data.html_content);
-        win.document.close();
-        await loadDocuments(selectedOrderId);
-      }
-    } catch (e) {
-      console.error("Generate doc error:", e);
-    }
-  };
-  
-  const viewDocument = async (doc) => {
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/documents/${doc.id}`);
-      const data = await res.json();
-      if (data.html_content) {
-        const win = window.open("", "_blank");
-        win.document.write(data.html_content);
-        win.document.close();
-      }
-    } catch (e) {
-      console.error("View doc error:", e);
-    }
-  };
-  
-  // Calculate stats
-  const stats = useMemo(() => {
-    const total = orders.length;
-    const paid = orders.filter(o => {
-      const rentDue = Math.max(0, (o.total_rental || 0) - (o.rent_paid || 0));
-      return rentDue <= 0 && (o.damage_due || 0) <= 0;
-    }).length;
-    const withDebt = total - paid;
-    
-    return { total, paid, withDebt };
-  }, [orders]);
-  
-  // Deposits by currency
   const depositsByCurrency = useMemo(() => {
     const result = { UAH: 0, USD: 0, EUR: 0 };
     deposits.forEach(d => {
       const available = (d.held_amount || 0) - (d.used_amount || 0) - (d.refunded_amount || 0);
       if (available > 0) {
         const currency = d.currency || "UAH";
-        if (currency === "UAH") {
-          result.UAH += available;
-        } else if (currency === "USD") {
-          result.USD += d.actual_amount - (d.used_amount_original || 0) - (d.refunded_amount_original || 0);
-        } else if (currency === "EUR") {
-          result.EUR += d.actual_amount - (d.used_amount_original || 0) - (d.refunded_amount_original || 0);
-        }
+        if (currency === "UAH") result.UAH += available;
+        else if (currency === "USD") result.USD += d.actual_amount - (d.used_amount || 0) - (d.refunded_amount || 0);
+        else if (currency === "EUR") result.EUR += d.actual_amount - (d.used_amount || 0) - (d.refunded_amount || 0);
       }
     });
     return result;
   }, [deposits]);
   
-  // Form validation
-  const needsName = payType === "additional";
-  const needsCurrency = payType === "deposit_in";
-  const canSubmit = amount.trim().length > 0 && Number(amount) > 0 && (!needsName || additionalName.trim().length > 2);
+  const orderStats = useMemo(() => {
+    const total = orders.length;
+    const paid = orders.filter(o => {
+      const rentDue = Math.max(0, (o.total_rental || 0) - (o.rent_paid || 0));
+      return rentDue <= 0 && (o.damage_due || 0) <= 0;
+    }).length;
+    return { total, paid, withDebt: total - paid };
+  }, [orders]);
   
-  // Document types
-  const DOC_TYPES = [
-    { type: "invoice_offer", title: "Рахунок-оферта", forIndividual: true },
-    { type: "contract_rent", title: "Договір оренди", forIndividual: true },
-    { type: "deposit_settlement_act", title: "Акт взаєморозрахунків", forIndividual: true },
-    { type: "deposit_refund_act", title: "Акт повернення застави", forIndividual: true },
-    { type: "invoice_additional", title: "Рахунок на доплату", forIndividual: true },
-  ];
-  
-  // Legal entity document types
-  const LEGAL_DOC_TYPES = [
-    { type: "invoice_legal", title: "Рахунок (юр. особа)", forLegal: true },
-    { type: "service_act", title: "Акт виконаних робіт", forSimplified: true },
-    { type: "goods_invoice", title: "Видаткова накладна", forGeneral: true },
-  ];
-  
-  // Payer profile state
-  const [showPayerModal, setShowPayerModal] = useState(false);
-  const [payerProfiles, setPayerProfiles] = useState([]);
-  const [selectedPayerProfile, setSelectedPayerProfile] = useState(null);
-  const [payerForm, setPayerForm] = useState({
-    payer_type: "fop_simple",
-    company_name: "",
-    edrpou: "",
-    iban: "",
-    bank_name: "",
-    director_name: "",
-    address: "",
-    is_vat_payer: false
-  });
-  
-  // Load payer profiles
-  const loadPayerProfiles = useCallback(async () => {
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/payer-profiles`);
-      const data = await res.json();
-      setPayerProfiles(data.profiles || []);
-    } catch (e) {
-      console.error("Load payer profiles error:", e);
-    }
-  }, []);
-  
-  // Load order payer
-  const loadOrderPayer = useCallback(async (orderId) => {
-    if (!orderId) return;
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/payer-profiles/order/${orderId}`);
-      const data = await res.json();
-      setSelectedPayerProfile(data.profile || null);
-    } catch (e) {
-      console.error("Load order payer error:", e);
-      setSelectedPayerProfile(null);
-    }
-  }, []);
-  
-  // Save payer profile
-  const handleSavePayerProfile = async () => {
-    if (!payerForm.company_name.trim()) return;
-    
-    setSaving(true);
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/payer-profiles`, {
-        method: "POST",
-        body: JSON.stringify(payerForm)
+  // ===== TIMELINE =====
+  const timeline = useMemo(() => {
+    const items = [];
+    payments.forEach(p => {
+      const typeLabels = {
+        rent: "Оренда", additional: "Донарахування", damage: "Шкода",
+        deposit: "Застава", late: "Прострочення", advance: "Передплата"
+      };
+      items.push({
+        id: `p_${p.id}`, at: fmtDate(p.occurred_at), status: "done",
+        label: p.note || typeLabels[p.payment_type] || p.payment_type,
+        amount: money(p.amount),
+        meta: `${p.method === "cash" ? "готівка" : "безготівка"}${p.accepted_by_name ? ` · ${p.accepted_by_name}` : ""}`
       });
-      const data = await res.json();
-      
-      if (data.success && selectedOrderId) {
-        // Assign to order
-        await authFetch(`${BACKEND_URL}/api/payer-profiles/order/${selectedOrderId}/assign/${data.profile_id}`, {
-          method: "POST"
+    });
+    if (orderDeposit) {
+      if (orderDeposit.used_amount > 0) {
+        items.push({
+          id: "dep_used", at: fmtDate(orderDeposit.closed_at), status: "warn",
+          label: "Утримано із застави", amount: money(-orderDeposit.used_amount), meta: "компенсація"
         });
-        await loadPayerProfiles();
-        await loadOrderPayer(selectedOrderId);
+      }
+      if (orderDeposit.refunded_amount > 0) {
+        items.push({
+          id: "dep_ref", at: fmtDate(orderDeposit.closed_at), status: "done",
+          label: "Застава повернута", amount: money(orderDeposit.refunded_amount), meta: ""
+        });
+      }
+    }
+    if (damageFees.due_amount > 0) {
+      items.push({
+        id: "dmg_due", at: "Очікує", status: "warn",
+        label: "Шкода (не сплачено)", amount: money(damageFees.due_amount),
+        meta: damageFees.items.map(d => d.name).slice(0, 3).join(", ")
+      });
+    }
+    return items.sort((a, b) => (a.at === "Очікує" ? -1 : b.at === "Очікує" ? 1 : 0));
+  }, [payments, orderDeposit, damageFees]);
+  
+  // ===== PAYMENT HANDLERS =====
+  const handlePayment = async (paymentType, paymentAmount, paymentMethod, extraData = {}) => {
+    if (!selectedOrderId || !paymentAmount || Number(paymentAmount) <= 0) return false;
+    setSaving(true);
+    const user = getUser();
+    
+    try {
+      if (paymentType === "deposit_in") {
+        // Accept deposit (застава)
+        const currency = extraData.currency || "UAH";
+        const rate = currency === "USD" ? 41.5 : currency === "EUR" ? 45.2 : 1;
+        await authFetch(`${BACKEND_URL}/api/finance/deposits/create`, {
+          method: "POST",
+          body: JSON.stringify({
+            order_id: selectedOrderId,
+            expected_amount: selectedOrder?.total_deposit || 0,
+            actual_amount: Number(paymentAmount),
+            currency: currency,
+            exchange_rate: rate,
+            method: paymentMethod,
+            accepted_by_id: user.id,
+            accepted_by_name: user.email,
+          }),
+        });
+      } else if (paymentType === "advance") {
+        // Advance payment (передплата) - йде в дохід
+        await authFetch(`${BACKEND_URL}/api/finance/payments`, {
+          method: "POST",
+          body: JSON.stringify({
+            payment_type: "advance",
+            method: paymentMethod,
+            amount: Number(paymentAmount),
+            order_id: selectedOrderId,
+            accepted_by_id: user.id,
+            accepted_by_name: user.email,
+            note: extraData.note || "Передплата",
+          }),
+        });
+      } else if (paymentType === "deposit_out" && orderDeposit) {
+        // Refund deposit
+        const available = orderDeposit.available || (orderDeposit.held_amount - orderDeposit.used_amount - orderDeposit.refunded_amount);
+        const refundAmount = Math.min(Number(paymentAmount), available);
+        await authFetch(`${BACKEND_URL}/api/finance/deposits/${orderDeposit.id}/refund?amount=${refundAmount}&method=${paymentMethod}`, {
+          method: "POST",
+        });
+      } else if (paymentType === "deposit_use" && orderDeposit) {
+        // Use deposit for damage
+        await authFetch(`${BACKEND_URL}/api/finance/deposits/${orderDeposit.id}/use?amount=${Number(paymentAmount)}`, {
+          method: "POST",
+          body: JSON.stringify({ note: "Утримання за шкоду" }),
+        });
+      } else {
+        // Regular payment (rent, additional, damage, late)
+        await authFetch(`${BACKEND_URL}/api/finance/payments`, {
+          method: "POST",
+          body: JSON.stringify({
+            payment_type: paymentType,
+            method: paymentMethod,
+            amount: Number(paymentAmount),
+            order_id: selectedOrderId,
+            accepted_by_id: user.id,
+            accepted_by_name: user.email,
+            note: extraData.note,
+            description: extraData.description,
+          }),
+        });
       }
       
-      setShowPayerModal(false);
-      setPayerForm({
-        payer_type: "fop_simple",
-        company_name: "",
-        edrpou: "",
-        iban: "",
-        bank_name: "",
-        director_name: "",
-        address: "",
-        is_vat_payer: false
-      });
+      await refreshAll();
+      setSaving(false);
+      return true;
     } catch (e) {
-      console.error("Save payer profile error:", e);
+      console.error("Payment error:", e);
       alert("Помилка: " + e.message);
+      setSaving(false);
+      return false;
     }
-    setSaving(false);
   };
   
-  // Assign existing payer profile to order
-  const handleAssignPayerProfile = async (profileId) => {
-    if (!selectedOrderId) return;
-    
+  // Add expense
+  const handleAddExpense = async (category, amount, description, opType = "expense") => {
+    if (!amount || Number(amount) <= 0 || !description.trim()) return false;
     setSaving(true);
+    const user = getUser();
+    
     try {
-      await authFetch(`${BACKEND_URL}/api/payer-profiles/order/${selectedOrderId}/assign/${profileId}`, {
-        method: "POST"
+      await authFetch(`${BACKEND_URL}/api/finance/expenses/simple`, {
+        method: "POST",
+        body: JSON.stringify({
+          amount: Number(amount),
+          description,
+          category,
+          operation_type: opType,
+          created_by_id: user.id,
+          created_by_name: user.email,
+        }),
       });
-      await loadOrderPayer(selectedOrderId);
+      await loadPayoutsStats();
+      await loadAllExpenses();
+      setSaving(false);
+      return true;
     } catch (e) {
-      console.error("Assign payer error:", e);
+      console.error("Add expense error:", e);
+      setSaving(false);
+      return false;
     }
-    setSaving(false);
   };
   
-  // Generate document with payer profile
-  const generateLegalDocument = async (docType) => {
+  // Generate document
+  const generateDocument = async (docType) => {
     if (!selectedOrderId) return;
     try {
       const options = selectedPayerProfile ? { payer_profile_id: selectedPayerProfile.id } : {};
@@ -776,23 +761,35 @@ export default function FinanceHub() {
         const win = window.open("", "_blank");
         win.document.write(data.html_content);
         win.document.close();
-        await loadDocuments(selectedOrderId);
+        await loadOrderSnapshot(selectedOrderId);
       }
     } catch (e) {
       console.error("Generate doc error:", e);
     }
   };
   
-  // Payer type labels
-  const PAYER_TYPE_LABELS = {
-    individual: "Фіз. особа",
-    fop_simple: "ФОП (спрощена)",
-    fop_general: "ФОП (загальна)",
-    llc_simple: "ТОВ (спрощена)",
-    llc_general: "ТОВ (загальна)"
-  };
+  // ===== TABS CONFIG =====
+  // Нова структура: MA в Клієнтах, документи в Операціях, Документи → Реєстр
+  const TABS = [
+    { id: "operations", label: "Операції", icon: "💰" },      // Головна: ордери + всі документи
+    { id: "clients", label: "Клієнти", icon: "👥" },          // Клієнти + Платники + MA
+    { id: "registry", label: "Реєстр", icon: "📄" },          // Архів документів (read-only)
+    { id: "cash", label: "Каси", icon: "💵" },
+    { id: "deposits", label: "Депозити", icon: "🔒" },
+    { id: "expenses", label: "Витрати", icon: "📉" },
+    { id: "analytics", label: "Аналітика", icon: "📈" },
+    { id: "forecast", label: "План", icon: "📊" },
+  ];
   
-  if (loading) {
+  // ===== RENDER =====
+  // Show loading for max 5 seconds, then render anyway
+  const [loadingTimeout, setLoadingTimeout] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setLoadingTimeout(true), 5000);
+    return () => clearTimeout(timer);
+  }, []);
+  
+  if (loading && !loadingTimeout) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-slate-500">Завантаження...</div>
@@ -802,1256 +799,2532 @@ export default function FinanceHub() {
   
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Corporate Header */}
       <CorporateHeader />
       
-      {/* Finance Controls */}
-      <div className="sticky top-[60px] z-20 border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-lg font-extrabold">💰 Фінанси</span>
+      {/* Header with KPI */}
+      <div className="sticky top-[60px] z-20 border-b border-slate-200 bg-white/95 backdrop-blur">
+        <div className="mx-auto max-w-7xl px-4 py-3">
+          {/* Top row: Title + KPI + Controls */}
+          <div className="flex items-center justify-between gap-4 mb-3">
+            <div className="flex items-center gap-3">
+              <span className="text-xl font-extrabold">💰 Фінанси</span>
+              <div className="hidden sm:flex items-center gap-4 ml-4 text-sm">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-500">Готівка:</span>
+                  <span className="font-bold text-emerald-600">{money(payoutsStats?.total_cash_balance || 0)}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-500">Банк:</span>
+                  <span className="font-bold text-blue-600">{money(payoutsStats?.bank_balance || 0)}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-500">Застави:</span>
+                  <span className="font-bold text-amber-600">{money(depositsByCurrency.UAH)}</span>
+                  {depositsByCurrency.USD > 0 && <span className="font-bold text-amber-600">+ ${depositsByCurrency.USD.toFixed(0)}</span>}
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-[140px]" />
+              <Button variant="ghost" onClick={refreshAll} className="!px-3">🔄</Button>
+            </div>
           </div>
-
-          <div className="flex items-center gap-2">
-            <div className="hidden sm:block text-xs text-slate-500">Місяць</div>
-            <Input
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              className="w-[140px]"
-            />
-            <Button variant="ghost" onClick={refreshAll} className="!px-3">🔄</Button>
-          </div>
-        </div>
-
-        {/* Mobile tabs */}
-        <div className="mx-auto max-w-7xl px-4 pb-3 sm:hidden">
-          <div className="grid grid-cols-3 gap-2">
-            <Button variant={activeTabMobile === "kasy" ? "primary" : "ghost"} onClick={() => setActiveTabMobile("kasy")}>
-              Каси
-            </Button>
-            <Button variant={activeTabMobile === "order" ? "primary" : "ghost"} onClick={() => setActiveTabMobile("order")}>
-              Ордер
-            </Button>
-            <Button variant={activeTabMobile === "actions" ? "primary" : "ghost"} onClick={() => setActiveTabMobile("actions")}>
-              Дії
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      {/* Layout */}
-      <div className="mx-auto max-w-7xl px-4 py-4">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-12">
           
-          {/* LEFT: Каси + Ордери */}
-          <div className={cn("sm:col-span-3 space-y-4", activeTabMobile !== "kasy" && "hidden sm:block")}>
-            <Card title="📊 Каси">
-              <div className="divide-y divide-slate-100">
-                <div className="pb-2">
-                  <div className="text-xs font-semibold text-slate-500 mb-2">💵 Готівка</div>
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600">Оренда</span>
-                      <span className="font-semibold text-emerald-600">{money(payoutsStats?.rent_cash_balance || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600">Шкода</span>
-                      <span className="font-semibold text-amber-600">{money(payoutsStats?.damage_cash_balance || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm pt-1 border-t border-slate-100">
-                      <span className="text-slate-700 font-medium">Разом</span>
-                      <span className="font-bold">{money(payoutsStats?.total_cash_balance || 0)}</span>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="py-2">
-                  <div className="text-xs font-semibold text-slate-500 mb-2">🏦 Безготівка</div>
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600">Оренда</span>
-                      <span className="font-semibold">{money(payoutsStats?.rent_bank_balance || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600">Шкода</span>
-                      <span className="font-semibold">{money(payoutsStats?.damage_bank_balance || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm pt-1 border-t border-slate-100">
-                      <span className="text-slate-700 font-medium">Разом</span>
-                      <span className="font-bold">{money(payoutsStats?.bank_balance || 0)}</span>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="py-2">
-                  <div className="text-xs font-semibold text-slate-500 mb-2">🔒 Застави (холд)</div>
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600">₴</span>
-                      <span className="font-semibold">{depositsByCurrency.UAH.toLocaleString("uk-UA")}</span>
-                    </div>
-                    {depositsByCurrency.USD > 0 && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-slate-600">$</span>
-                        <span className="font-semibold">{depositsByCurrency.USD.toLocaleString("uk-UA")}</span>
-                      </div>
-                    )}
-                    {depositsByCurrency.EUR > 0 && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-slate-600">€</span>
-                        <span className="font-semibold">{depositsByCurrency.EUR.toLocaleString("uk-UA")}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="pt-2">
-                  <div className="text-xs font-semibold text-slate-500 mb-2">📉 Витрати</div>
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-400 mb-1">Готівка:</div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600 pl-2">Оренда</span>
-                      <span className="font-semibold text-rose-600">-{money(payoutsStats?.rent_cash_expenses || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600 pl-2">Шкода</span>
-                      <span className="font-semibold text-rose-600">-{money(payoutsStats?.damage_cash_expenses || 0)}</span>
-                    </div>
-                    <div className="text-xs text-slate-400 mt-2 mb-1">Безготівка:</div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600 pl-2">Оренда</span>
-                      <span className="font-semibold text-rose-600">-{money(payoutsStats?.rent_bank_expenses || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-600 pl-2">Шкода</span>
-                      <span className="font-semibold text-rose-600">-{money(payoutsStats?.damage_bank_expenses || 0)}</span>
-                    </div>
-                  </div>
-                </div>
-                
-                {(payoutsStats?.rent_cash_deposits > 0 || payoutsStats?.damage_cash_deposits > 0) && (
-                  <div className="pt-2">
-                    <div className="text-xs font-semibold text-slate-500 mb-2">📥 Внесення</div>
-                    <div className="space-y-1">
-                      {payoutsStats?.rent_cash_deposits > 0 && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-slate-600">Оренда</span>
-                          <span className="font-semibold text-emerald-600">+{money(payoutsStats.rent_cash_deposits)}</span>
-                        </div>
-                      )}
-                      {payoutsStats?.damage_cash_deposits > 0 && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-slate-600">Шкода</span>
-                          <span className="font-semibold text-emerald-600">+{money(payoutsStats.damage_cash_deposits)}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </Card>
-
-            <Card title="📋 Ордери" right={<span className="text-xs text-slate-500">{filteredOrders.length}</span>}>
-              <div className="mb-3">
-                <Input 
-                  placeholder="код / клієнт / телефон" 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                {filteredOrders.length === 0 ? (
-                  <div className="text-center text-slate-500 py-4">Немає ордерів</div>
-                ) : (
-                  filteredOrders.map((o) => {
-                    const badge = getOrderBadge(o);
-                    const isSelected = o.order_id === selectedOrderId;
-                    return (
-                      <button
-                        key={o.order_id}
-                        onClick={() => setSelectedOrderId(o.order_id)}
-                        className={cn(
-                          "w-full rounded-xl border px-3 py-2 text-left transition",
-                          isSelected 
-                            ? "border-slate-900 bg-slate-50 ring-1 ring-slate-900" 
-                            : "border-slate-200 bg-white hover:bg-slate-50"
-                        )}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-sm font-semibold text-slate-900">#{o.order_number}</div>
-                          <Badge kind={badge.kind}>{badge.text}</Badge>
-                        </div>
-                        <div className="text-xs text-slate-500">{o.customer_name || o.client_name}</div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            </Card>
-          </div>
-
-          {/* CENTER: Активний ордер */}
-          <div className={cn("sm:col-span-6 space-y-4", activeTabMobile !== "order" && "hidden sm:block")}>
-            {selectedOrder ? (
-              <Card
-                title={
-                  <div className="flex items-center gap-2">
-                    <span>🔍 Ордер</span>
-                    <span className="text-slate-500 font-medium">
-                      #{selectedOrder.order_number} · {selectedOrder.customer_name || selectedOrder.client_name}
-                    </span>
-                  </div>
-                }
-                right={<Badge kind={getOrderBadge(selectedOrder).kind}>{selectedOrder.status}</Badge>}
+          {/* Tabs */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 -mb-1">
+            {TABS.map(tab => (
+              <TabButton
+                key={tab.id}
+                active={activeTab === tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                icon={tab.icon}
               >
-                <div className="space-y-4">
-                  {/* KPI Row - з урахуванням знижки */}
-                  {(() => {
-                    const discount = selectedOrder.discount_amount || 0;
-                    const totalAfterDiscount = selectedOrder.total_rental - discount;
-                    const toPay = Math.max(0, totalAfterDiscount - selectedOrder.rent_paid);
-                    
-                    return (
-                      <>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
-                            <div className="text-xs text-slate-500">Нараховано</div>
-                            <div className="text-lg font-bold">{money(selectedOrder.total_rental)}</div>
-                            {discount > 0 && (
-                              <div className="text-xs text-emerald-600 mt-1">
-                                − знижка {money(discount)}
-                              </div>
-                            )}
-                          </div>
-                          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
-                            <div className="text-xs text-slate-500">Оплачено</div>
-                            <div className="text-lg font-bold text-emerald-600">{money(selectedOrder.rent_paid)}</div>
-                          </div>
-                          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
-                            <div className="text-xs text-slate-500">Застава</div>
-                            <div className="text-lg font-bold">{money(selectedOrder.deposit_held)}</div>
-                          </div>
-                          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
-                            <div className="text-xs text-slate-500">До сплати</div>
-                            <div className={cn(
-                              "text-lg font-bold",
-                              toPay > 0 ? "text-amber-600" : "text-emerald-600"
-                            )}>
-                              {money(toPay)}
-                            </div>
-                            {discount > 0 && (
-                              <div className="text-xs text-slate-400 mt-1">
-                                {money(totalAfterDiscount)} після знижки
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        
-                        {/* Знижка - редагована */}
-                        {discount > 0 && (
-                          <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <div className="text-xs text-emerald-700 font-medium">🏷️ ЗНИЖКА</div>
-                                <div className="text-lg font-bold text-emerald-700">
-                                  {selectedOrder.discount_percent > 0 && `${selectedOrder.discount_percent}% = `}
-                                  {money(discount)}
-                                </div>
-                                <div className="text-xs text-emerald-600 mt-1">
-                                  Фінальна сума: {money(totalAfterDiscount)}
-                                </div>
-                              </div>
-                              <button
-                                className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded hover:bg-emerald-200"
-                                onClick={async () => {
-                                  const newAmount = prompt("Введіть нову суму знижки:", discount);
-                                  if (newAmount === null) return;
-                                  const amount = parseFloat(newAmount);
-                                  if (isNaN(amount) || amount < 0) {
-                                    alert("Невірна сума");
-                                    return;
-                                  }
-                                  setSaving(true);
-                                  try {
-                                    await authFetch(`${BACKEND_URL}/api/finance/order/${selectedOrderId}/discount`, {
-                                      method: "PUT",
-                                      body: JSON.stringify({ amount, note: `Знижка (редаговано)` })
-                                    });
-                                    await refreshAll();
-                                  } catch (e) {
-                                    alert("Помилка: " + e.message);
-                                  }
-                                  setSaving(false);
-                                }}
-                              >
-                                ✏️ Редагувати
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-
-                  {/* Timeline */}
-                  {timeline.length > 0 && (
-                    <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                      <div className="text-xs font-semibold text-slate-600 mb-3">ТАЙМЛАЙН ОПЕРАЦІЙ</div>
-                      <Timeline items={timeline} />
-                    </div>
-                  )}
-
-                  {/* Damage Alert */}
-                  {damageFees.due > 0 && (
-                    <div className="rounded-2xl border-2 border-rose-300 bg-rose-50 p-4">
-                      <div className="flex items-start gap-3">
-                        <span className="text-2xl">⚠️</span>
-                        <div className="flex-1">
-                          <div className="font-semibold text-rose-900">Непогашена шкода: {money(damageFees.due)}</div>
-                          <div className="text-sm text-rose-700 mt-1">
-                            {damageFees.items.map(d => `${d.product_name}: ${money(d.fee)}`).join(", ")}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Payment Form */}
-                  <div className="rounded-2xl border border-slate-200 p-4">
-                    <div className="flex items-center justify-between gap-3 mb-3">
-                      <div className="text-sm font-semibold">💳 Прийняти оплату</div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <div className="text-xs text-slate-500 mb-1">Тип</div>
-                        <Select
-                          value={payType}
-                          onChange={setPayType}
-                          options={[
-                            { value: "rent", label: "Оренда" },
-                            { value: "additional", label: "Донарахування" },
-                            { value: "damage", label: "Шкода" },
-                            { value: "deposit_in", label: "Прийом застави" },
-                            { value: "deposit_use", label: "Утримання із застави" },
-                          ]}
-                        />
-                      </div>
-
-                      <div>
-                        <div className="text-xs text-slate-500 mb-1">Метод</div>
-                        <Select
-                          value={method}
-                          onChange={setMethod}
-                          options={[
-                            { value: "cash", label: "Готівка" },
-                            { value: "bank", label: "Безготівка" },
-                          ]}
-                        />
-                      </div>
-
-                      {needsCurrency && (
-                        <div>
-                          <div className="text-xs text-slate-500 mb-1">Валюта</div>
-                          <Select
-                            value={depositCurrency}
-                            onChange={setDepositCurrency}
-                            options={[
-                              { value: "UAH", label: "₴ UAH" },
-                              { value: "USD", label: "$ USD" },
-                              { value: "EUR", label: "€ EUR" },
-                            ]}
-                          />
-                        </div>
-                      )}
-
-                      {needsName && (
-                        <div className="sm:col-span-2">
-                          <div className="text-xs text-slate-500 mb-1">Назва *</div>
-                          <Input
-                            value={additionalName}
-                            onChange={(e) => setAdditionalName(e.target.value)}
-                            placeholder="Доставка, упаковка..."
-                          />
-                        </div>
-                      )}
-
-                      <div>
-                        <div className="text-xs text-slate-500 mb-1">Сума {needsCurrency && depositCurrency !== "UAH" ? `(${depositCurrency})` : "(₴)"}</div>
-                        <Input 
-                          value={amount} 
-                          onChange={(e) => setAmount(e.target.value)} 
-                          placeholder="0" 
-                          inputMode="decimal" 
-                        />
-                      </div>
-
-                      <div className="flex items-end">
-                        <Button
-                          className="w-full"
-                          disabled={!canSubmit || saving}
-                          onClick={handlePayment}
-                        >
-                          {saving ? "..." : "Зарахувати"}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Deposit Block */}
-                  {orderDeposit && (
-                    <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
-                      <div className="flex items-center justify-between gap-3 mb-2">
-                        <div className="text-sm font-semibold">🔒 Застава</div>
-                        <span className="text-xs text-slate-500">{orderDeposit.currency || "UAH"}</span>
-                      </div>
-                      <div className="text-sm text-slate-700">
-                        Прийнято: <span className="font-semibold">
-                          {orderDeposit.currency === "USD" ? "$" : orderDeposit.currency === "EUR" ? "€" : "₴"}
-                          {(orderDeposit.actual_amount || orderDeposit.held_amount).toLocaleString("uk-UA")}
-                        </span>
-                      </div>
-                      <div className="text-sm text-slate-700">
-                        Використано: <span className="font-semibold">
-                          {orderDeposit.currency === "USD" ? "$" : orderDeposit.currency === "EUR" ? "€" : "₴"}
-                          {(orderDeposit.used_amount_original || orderDeposit.used_amount || 0).toLocaleString("uk-UA")}
-                        </span>
-                      </div>
-                      <div className="text-sm text-slate-700">
-                        Повернуто: <span className="font-semibold">
-                          {orderDeposit.currency === "USD" ? "$" : orderDeposit.currency === "EUR" ? "€" : "₴"}
-                          {(orderDeposit.refunded_amount_original || orderDeposit.refunded_amount || 0).toLocaleString("uk-UA")}
-                        </span>
-                      </div>
-                      <div className="text-sm text-slate-700 mt-2 pt-2 border-t border-slate-200">
-                        <strong>Доступно:</strong> <span className="font-bold text-emerald-600">
-                          {orderDeposit.currency === "USD" ? "$" : orderDeposit.currency === "EUR" ? "€" : "₴"}
-                          {Math.max(0, (orderDeposit.actual_amount || orderDeposit.held_amount) - 
-                            (orderDeposit.used_amount_original || orderDeposit.used_amount || 0) - 
-                            (orderDeposit.refunded_amount_original || orderDeposit.refunded_amount || 0)
-                          ).toLocaleString("uk-UA")}
-                        </span>
-                      </div>
-                      
-                      {/* Кнопка повернення застави */}
-                      {(() => {
-                        const available = (orderDeposit.actual_amount || orderDeposit.held_amount) - 
-                          (orderDeposit.used_amount_original || orderDeposit.used_amount || 0) - 
-                          (orderDeposit.refunded_amount_original || orderDeposit.refunded_amount || 0);
-                        return available > 0 ? (
-                          <div className="mt-3 pt-3 border-t border-slate-200">
-                            <Button
-                              variant="primary"
-                              className="w-full"
-                              disabled={saving}
-                              onClick={async () => {
-                                if (!window.confirm(`Повернути заставу: ${orderDeposit.currency === "USD" ? "$" : orderDeposit.currency === "EUR" ? "€" : "₴"}${available}?`)) return;
-                                setSaving(true);
-                                try {
-                                  await authFetch(`${BACKEND_URL}/api/finance/deposits/${orderDeposit.id}/refund?amount=${available}&method=cash`, {
-                                    method: "POST",
-                                  });
-                                  await refreshAll();
-                                } catch (e) {
-                                  alert("Помилка: " + e.message);
-                                }
-                                setSaving(false);
-                              }}
-                            >
-                              💸 Повернути заставу
-                            </Button>
-                          </div>
-                        ) : null;
-                      })()}
-                    </div>
-                  )}
-                  
-                  {/* Кнопка архівування - активна тільки якщо застава повернена */}
-                  {selectedOrder && (
-                    <div className="rounded-2xl border border-slate-200 p-4 mt-4">
-                      <div className="text-sm font-semibold mb-3">📂 Архівування</div>
-                      {(() => {
-                        const depositAvailable = orderDeposit ? 
-                          (orderDeposit.actual_amount || orderDeposit.held_amount) - 
-                          (orderDeposit.used_amount_original || orderDeposit.used_amount || 0) - 
-                          (orderDeposit.refunded_amount_original || orderDeposit.refunded_amount || 0) : 0;
-                        const canArchive = !orderDeposit || depositAvailable <= 0;
-                        
-                        return (
-                          <>
-                            {!canArchive && (
-                              <div className="text-xs text-amber-600 mb-2">
-                                ⚠️ Спочатку поверніть заставу
-                              </div>
-                            )}
-                            <Button
-                              variant={canArchive ? "primary" : "ghost"}
-                              className="w-full"
-                              disabled={!canArchive || saving}
-                              onClick={async () => {
-                                if (!window.confirm(`Відправити замовлення #${selectedOrder.order_number} в архів?`)) return;
-                                setSaving(true);
-                                try {
-                                  await authFetch(`${BACKEND_URL}/api/decor-orders/${selectedOrderId}/archive`, {
-                                    method: "POST",
-                                  });
-                                  alert("✅ Замовлення архівовано");
-                                  await loadOrders();
-                                  setSelectedOrderId(null);
-                                } catch (e) {
-                                  alert("Помилка: " + e.message);
-                                }
-                                setSaving(false);
-                              }}
-                            >
-                              📂 Відправити в архів
-                            </Button>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  )}
-
-                  {/* ============ БЛОК ШКОДИ (Damage) - Нова логіка ============ */}
-                  {/* Показуємо якщо є зафіксована шкода АБО вже нараховано */}
-                  <div className="rounded-2xl border-2 border-rose-200 bg-rose-50 p-4 mt-4">
-                    <div className="flex items-center justify-between gap-3 mb-3">
-                      <div className="text-sm font-semibold text-rose-900">💔 Шкода</div>
-                      {damageFees.due_amount > 0 ? (
-                        <span className="text-xs bg-rose-600 text-white px-2 py-0.5 rounded-full">
-                          Нараховано: {money(damageFees.due_amount)}
-                        </span>
-                      ) : damageFees.paid_amount > 0 ? (
-                        <span className="text-xs bg-emerald-600 text-white px-2 py-0.5 rounded-full">✓ Оплачено</span>
-                      ) : damageFees.items?.length > 0 ? (
-                        <span className="text-xs bg-amber-500 text-white px-2 py-0.5 rounded-full">Орієнтир: {money(damageFees.total_fee)}</span>
-                      ) : (
-                        <span className="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">—</span>
-                      )}
-                    </div>
-                    
-                    {/* Орієнтовна шкода від реквізиторів */}
-                    {damageFees.items?.length > 0 && (
-                      <div className="mb-3">
-                        <div className="text-xs text-rose-700 mb-2 uppercase font-medium">📋 Зафіксовано реквізиторами (орієнтир):</div>
-                        <div className="space-y-1 max-h-24 overflow-y-auto">
-                          {damageFees.items.map((d, i) => (
-                            <div key={i} className="flex items-center justify-between text-sm bg-white rounded-lg p-2">
-                              <span className="text-rose-800">{d.product_name} • {d.damage_type}</span>
-                              <span className="font-semibold text-rose-600">{money(d.fee)}</span>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="mt-2 text-right text-sm">
-                          <span className="text-rose-700">Орієнтовна сума: </span>
-                          <span className="font-bold text-rose-800">{money(damageFees.total_fee)}</span>
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Нараховано менеджером */}
-                    {(damageFees.due_amount > 0 || damageFees.paid_amount > 0) && (
-                      <div className="mb-3 p-3 bg-white rounded-xl border border-rose-300">
-                        <div className="text-xs text-rose-700 mb-2 uppercase font-medium">💰 Нараховано до сплати:</div>
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <div className="text-lg font-bold text-rose-800">{money(damageFees.due_amount + damageFees.paid_amount)}</div>
-                            {damageFees.paid_amount > 0 && (
-                              <div className="text-xs text-emerald-600">Оплачено: {money(damageFees.paid_amount)}</div>
-                            )}
-                          </div>
-                          {damageFees.due_amount > 0 && (
-                            <div className="flex gap-2">
-                              <Input 
-                                type="number"
-                                className="w-28"
-                                placeholder="Сума"
-                                value={damagePayAmount}
-                                onChange={(e) => setDamagePayAmount(e.target.value)}
-                              />
-                              <Button
-                                variant="danger"
-                                disabled={!damagePayAmount || Number(damagePayAmount) <= 0 || saving}
-                                onClick={async () => {
-                                  setSaving(true);
-                                  try {
-                                    await authFetch(`${BACKEND_URL}/api/finance/payments`, {
-                                      method: "POST",
-                                      body: JSON.stringify({
-                                        payment_type: "damage",
-                                        method: "cash",
-                                        amount: Number(damagePayAmount),
-                                        order_id: selectedOrderId,
-                                      })
-                                    });
-                                    setDamagePayAmount("");
-                                    await refreshAll();
-                                  } catch (e) {
-                                    alert("Помилка: " + e.message);
-                                  }
-                                  setSaving(false);
-                                }}
-                              >
-                                Оплатити
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Форма нарахування шкоди менеджером */}
-                    {damageFees.due_amount <= 0 && (
-                      <div className="border-t border-rose-200 pt-3">
-                        <div className="text-xs text-rose-700 mb-2 font-medium">✍️ Нарахувати шкоду (фінальна сума):</div>
-                        <div className="flex gap-2">
-                          <Input 
-                            type="number"
-                            className="flex-1"
-                            placeholder={damageFees.total_fee > 0 ? `Орієнтир: ${damageFees.total_fee}` : "Сума ₴"}
-                            value={newDamageAmount}
-                            onChange={(e) => setNewDamageAmount(e.target.value)}
-                          />
-                          <Input 
-                            className="flex-1"
-                            placeholder="Опис"
-                            value={newDamageNote}
-                            onChange={(e) => setNewDamageNote(e.target.value)}
-                          />
-                          <Button
-                            variant="danger"
-                            disabled={!newDamageAmount || Number(newDamageAmount) <= 0 || saving}
-                            onClick={async () => {
-                              setSaving(true);
-                              try {
-                                // Нараховуємо шкоду як окремий платіж типу damage (pending)
-                                await authFetch(`${BACKEND_URL}/api/finance/order/${selectedOrderId}/charges/add`, {
-                                  method: "POST",
-                                  body: JSON.stringify({
-                                    type: "damage",
-                                    amount: Number(newDamageAmount),
-                                    note: newDamageNote || "Нарахування за шкоду"
-                                  })
-                                });
-                                setNewDamageAmount("");
-                                setNewDamageNote("");
-                                await refreshAll();
-                              } catch (e) {
-                                alert("Помилка: " + e.message);
-                              }
-                              setSaving(false);
-                            }}
-                          >
-                            Нарахувати
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* ============ БЛОК ПРОСТРОЧЕННЯ (Late fees) - Нова логіка ============ */}
-                  <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-4 mt-4">
-                    <div className="flex items-center justify-between gap-3 mb-3">
-                      <div className="text-sm font-semibold text-amber-900">⏰ Прострочення</div>
-                      {lateFeeData.due > 0 ? (
-                        <span className="text-xs bg-amber-600 text-white px-2 py-0.5 rounded-full">
-                          Нараховано: {money(lateFeeData.due)}
-                        </span>
-                      ) : lateFeeData.paid > 0 ? (
-                        <span className="text-xs bg-emerald-600 text-white px-2 py-0.5 rounded-full">✓ Оплачено</span>
-                      ) : estimatedLateFee > 0 ? (
-                        <span className="text-xs bg-amber-500 text-white px-2 py-0.5 rounded-full">Орієнтир: {money(estimatedLateFee)}</span>
-                      ) : (
-                        <span className="text-xs bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">—</span>
-                      )}
-                    </div>
-                    
-                    {/* Орієнтовна сума прострочення (з історії часткових повернень) */}
-                    {estimatedLateFee > 0 && (
-                      <div className="mb-3 p-3 bg-amber-100 rounded-xl border border-amber-300">
-                        <div className="text-xs text-amber-700 mb-1 uppercase font-medium">📊 Орієнтовна сума (з історії):</div>
-                        <div className="text-lg font-bold text-amber-800">{money(estimatedLateFee)}</div>
-                        <div className="text-xs text-amber-600 mt-1">Розрахунок на основі часткових повернень</div>
-                      </div>
-                    )}
-                    
-                    {/* Нараховано менеджером */}
-                    {lateFeeData.items?.length > 0 && (
-                      <div className="mb-3">
-                        <div className="text-xs text-amber-700 mb-2 uppercase font-medium">💰 Нараховано до сплати:</div>
-                        <div className="space-y-1 max-h-32 overflow-y-auto">
-                          {lateFeeData.items.map((item, i) => (
-                            <div key={i} className="flex items-center justify-between text-sm bg-white rounded-lg p-2 border border-amber-200">
-                              <span className="text-amber-800 flex-1 truncate">{item.note || 'Прострочення'}</span>
-                              <div className="flex items-center gap-2 ml-2">
-                                <span className={item.status === 'pending' ? "font-semibold text-amber-600" : "font-semibold text-emerald-600"}>
-                                  {money(item.amount)}
-                                </span>
-                                {item.status === 'pending' && (
-                                  <button
-                                    className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded hover:bg-emerald-200"
-                                    onClick={async () => {
-                                      const method = prompt("Метод оплати: cash або bank", "cash");
-                                      if (!method) return;
-                                      setSaving(true);
-                                      try {
-                                        await authFetch(`${BACKEND_URL}/api/finance/order/${selectedOrderId}/charges/${item.id}/pay`, {
-                                          method: "POST",
-                                          body: JSON.stringify({ method })
-                                        });
-                                        await refreshAll();
-                                      } catch (e) {
-                                        alert("Помилка: " + e.message);
-                                      }
-                                      setSaving(false);
-                                    }}
-                                  >
-                                    💵 Оплатити
-                                  </button>
-                                )}
-                                {item.status !== 'pending' && (
-                                  <span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded">✓ Оплачено</span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Форма нарахування прострочення менеджером */}
-                    <div className="border-t border-amber-200 pt-3">
-                      <div className="text-xs text-amber-700 mb-2 font-medium">✍️ Нарахувати прострочення (фінальна сума):</div>
-                      <div className="flex gap-2">
-                        <Input 
-                          type="number"
-                          className="w-32"
-                          placeholder={estimatedLateFee > 0 ? `~${estimatedLateFee}` : "Сума ₴"}
-                          value={newLateAmount}
-                          onChange={(e) => setNewLateAmount(e.target.value)}
-                        />
-                        <Input 
-                          className="flex-1"
-                          placeholder="Опис (напр., Прострочення 5 днів)"
-                          value={newLateNote}
-                          onChange={(e) => setNewLateNote(e.target.value)}
-                        />
-                        <Button
-                          disabled={!newLateAmount || Number(newLateAmount) <= 0 || saving}
-                          onClick={async () => {
-                            setSaving(true);
-                            try {
-                              await authFetch(`${BACKEND_URL}/api/finance/order/${selectedOrderId}/charges/add`, {
-                                method: "POST",
-                                body: JSON.stringify({
-                                  type: "late",
-                                  amount: Number(newLateAmount),
-                                  note: newLateNote || "Нарахування за прострочення"
-                                })
-                              });
-                              setNewLateAmount("");
-                              setNewLateNote("");
-                              await refreshAll();
-                            } catch (e) {
-                              alert("Помилка: " + e.message);
-                            }
-                            setSaving(false);
-                          }}
-                        >
-                          Нарахувати
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            ) : (
-              <Card>
-                <div className="text-center text-slate-500 py-8">
-                  Оберіть ордер зліва
-                </div>
-              </Card>
-            )}
-          </div>
-
-          {/* RIGHT: Дії + Статистика + Документи */}
-          <div className={cn("sm:col-span-3 space-y-4", activeTabMobile !== "actions" && "hidden sm:block")}>
-            <Card title="📊 Статистика">
-              <div className="divide-y divide-slate-100">
-                <StatRow label="Ордерів" value={String(stats.total)} />
-                <StatRow label="Оплачено" value={String(stats.paid)} />
-                <StatRow label="З боргом" value={String(stats.withDebt)} />
-              </div>
-            </Card>
-
-            {selectedOrder && (
-              <Card title="📄 Документи">
-                <div className="space-y-4">
-                  {/* Payer Profile Section */}
-                  <div className="rounded-xl border border-slate-200 p-3 bg-slate-50">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-xs font-semibold text-slate-600">ТИП ПЛАТНИКА</span>
-                      <button
-                        onClick={() => setShowPayerModal(true)}
-                        className="text-xs text-blue-600 hover:underline"
-                      >
-                        {selectedPayerProfile ? "Змінити" : "+ Додати"}
-                      </button>
-                    </div>
-                    {selectedPayerProfile ? (
-                      <div className="text-sm">
-                        <div className="font-semibold text-slate-900">{selectedPayerProfile.company_name}</div>
-                        <div className="text-xs text-slate-500">
-                          {PAYER_TYPE_LABELS[selectedPayerProfile.payer_type] || selectedPayerProfile.payer_type}
-                          {selectedPayerProfile.edrpou && ` · ${selectedPayerProfile.edrpou}`}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-slate-500">Фізична особа (за замовчуванням)</div>
-                    )}
-                  </div>
-                  
-                  {/* Documents for Individuals */}
-                  <div>
-                    <div className="text-xs font-semibold text-slate-500 mb-2">Документи (фіз. особа)</div>
-                    <div className="space-y-2">
-                      {DOC_TYPES.map((dt) => {
-                        const existing = documents.find(d => d.doc_type === dt.type);
-                        return (
-                          <div
-                            key={dt.type}
-                            className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2"
-                          >
-                            <div>
-                              <div className="text-sm font-medium text-slate-900">{dt.title}</div>
-                              {existing && (
-                                <div className="text-xs text-emerald-600">✓ {existing.doc_number}</div>
-                              )}
-                            </div>
-                            <div className="flex gap-1">
-                              {existing && (
-                                <button
-                                  onClick={() => viewDocument(existing)}
-                                  className="px-2 py-1 text-xs rounded-lg hover:bg-slate-100"
-                                >
-                                  👁
-                                </button>
-                              )}
-                              <button
-                                onClick={() => generateDocument(dt.type)}
-                                className="px-2 py-1 text-xs rounded-lg bg-slate-100 hover:bg-slate-200"
-                              >
-                                🔄
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  
-                  {/* Documents for Legal Entities */}
-                  <div>
-                    <div className="text-xs font-semibold text-slate-500 mb-2">Документи (юр. особа)</div>
-                    <div className="space-y-2">
-                      {LEGAL_DOC_TYPES.map((dt) => {
-                        const existing = documents.find(d => d.doc_type === dt.type);
-                        const isApplicable = selectedPayerProfile && (
-                          dt.forLegal ||
-                          (dt.forSimplified && ["fop_simple", "llc_simple"].includes(selectedPayerProfile.payer_type)) ||
-                          (dt.forGeneral && ["fop_general", "llc_general"].includes(selectedPayerProfile.payer_type))
-                        );
-                        
-                        return (
-                          <div
-                            key={dt.type}
-                            className={cn(
-                              "flex items-center justify-between rounded-xl border px-3 py-2",
-                              isApplicable 
-                                ? "border-blue-200 bg-blue-50" 
-                                : "border-slate-200 bg-slate-50 opacity-50"
-                            )}
-                          >
-                            <div>
-                              <div className="text-sm font-medium text-slate-900">{dt.title}</div>
-                              {existing && (
-                                <div className="text-xs text-emerald-600">✓ {existing.doc_number}</div>
-                              )}
-                              {!selectedPayerProfile && (
-                                <div className="text-xs text-slate-400">Вкажіть платника</div>
-                              )}
-                            </div>
-                            <div className="flex gap-1">
-                              {existing && (
-                                <button
-                                  onClick={() => viewDocument(existing)}
-                                  className="px-2 py-1 text-xs rounded-lg hover:bg-slate-100"
-                                >
-                                  👁
-                                </button>
-                              )}
-                              <button
-                                onClick={() => generateLegalDocument(dt.type)}
-                                disabled={!isApplicable}
-                                className={cn(
-                                  "px-2 py-1 text-xs rounded-lg",
-                                  isApplicable ? "bg-blue-100 hover:bg-blue-200" : "bg-slate-100 cursor-not-allowed"
-                                )}
-                              >
-                                🔄
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            )}
-
-            <Card title="⚡ Швидкі дії">
-              <div className="space-y-2">
-                <div className="text-xs font-semibold text-slate-500">💵 Витрати готівка</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button 
-                    variant="ghost" 
-                    className="text-xs !h-9"
-                    onClick={() => {
-                      setExpenseType("rent_cash");
-                      setOperationType("expense");
-                      setShowExpenseModal(true);
-                    }}
-                  >
-                    Оренда
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    className="text-xs !h-9"
-                    onClick={() => {
-                      setExpenseType("damage_cash");
-                      setOperationType("expense");
-                      setShowExpenseModal(true);
-                    }}
-                  >
-                    Шкода
-                  </Button>
-                </div>
-                
-                <div className="text-xs font-semibold text-slate-500 mt-3">🏦 Витрати безготівка</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button 
-                    variant="ghost" 
-                    className="text-xs !h-9"
-                    onClick={() => {
-                      setExpenseType("rent_bank");
-                      setOperationType("expense");
-                      setShowExpenseModal(true);
-                    }}
-                  >
-                    Оренда
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    className="text-xs !h-9"
-                    onClick={() => {
-                      setExpenseType("damage_bank");
-                      setOperationType("expense");
-                      setShowExpenseModal(true);
-                    }}
-                  >
-                    Шкода
-                  </Button>
-                </div>
-                
-                <div className="text-xs font-semibold text-slate-500 mt-3">📥 Внесення коштів</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button 
-                    variant="ghost" 
-                    className="text-xs !h-9 !text-emerald-600 !border-emerald-200"
-                    onClick={() => {
-                      setExpenseType("rent_cash");
-                      setOperationType("deposit");
-                      setShowExpenseModal(true);
-                    }}
-                  >
-                    + Оренда
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    className="text-xs !h-9 !text-emerald-600 !border-emerald-200"
-                    onClick={() => {
-                      setExpenseType("damage_cash");
-                      setOperationType("deposit");
-                      setShowExpenseModal(true);
-                    }}
-                  >
-                    + Шкода
-                  </Button>
-                </div>
-                
-                <div className="pt-2 mt-2 border-t border-slate-100">
-                  <Button 
-                    variant="ghost" 
-                    className="w-full"
-                    onClick={() => {
-                      loadAllExpenses();
-                      setShowOperationsModal(true);
-                    }}
-                  >
-                    📋 Всі операції
-                  </Button>
-                </div>
-              </div>
-            </Card>
+                {tab.label}
+              </TabButton>
+            ))}
           </div>
         </div>
       </div>
       
-      {/* Expense Modal */}
-      {showExpenseModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-              <h3 className="font-semibold">
-                {operationType === "deposit" ? "📥 Внесення коштів" : "📉 Витрата"}
-                {" • "}
-                {expenseType.includes("rent") ? "Оренда" : "Шкода"}
-                {" • "}
-                {expenseType.includes("bank") ? "Безготівка" : "Готівка"}
-              </h3>
-              <button onClick={() => setShowExpenseModal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+      {/* Tab Content */}
+      <div className="mx-auto max-w-7xl px-4 py-4">
+        {/* TAB: Operations */}
+        {activeTab === "operations" && (
+          <OperationsTab
+            orders={filteredOrders}
+            selectedOrderId={selectedOrderId}
+            setSelectedOrderId={setSelectedOrderId}
+            selectedOrder={selectedOrder}
+            orderSnapshot={orderSnapshot}
+            orderDeposit={orderDeposit}
+            payments={payments}
+            damageFees={damageFees}
+            lateFeeData={lateFeeData}
+            timeline={timeline}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            saving={saving}
+            handlePayment={handlePayment}
+            refreshAll={refreshAll}
+            payoutsStats={payoutsStats}
+            depositsByCurrency={depositsByCurrency}
+            orderStats={orderStats}
+            generateDocument={generateDocument}
+            selectedPayerProfile={selectedPayerProfile}
+            payerProfiles={payerProfiles}
+            orderPayerOptions={orderPayerOptions}
+            setOrderPayer={setOrderPayer}
+            matchedClient={matchedClient}
+            clientPayers={clientPayers}
+            selectedClientPayer={selectedClientPayer}
+            setSelectedClientPayer={setSelectedClientPayer}
+            clientSearching={clientSearching}
+            linkOrderToClient={linkOrderToClient}
+          />
+        )}
+        
+        {/* TAB: Registry (read-only документи) */}
+        {activeTab === "registry" && (
+          <RegistryTab
+            orders={orders}
+            documents={documents}
+            payerProfiles={payerProfiles}
+          />
+        )}
+        
+        {/* TAB: Cash */}
+        {activeTab === "cash" && (
+          <CashTab
+            payoutsStats={payoutsStats}
+            depositsByCurrency={depositsByCurrency}
+            handleAddExpense={handleAddExpense}
+            saving={saving}
+            refreshAll={refreshAll}
+          />
+        )}
+        
+        {/* TAB: Forecast */}
+        {activeTab === "forecast" && (
+          <ForecastTab orders={orders} />
+        )}
+        
+        {/* TAB: Expenses */}
+        {activeTab === "expenses" && (
+          <ExpensesTab
+            allExpenses={allExpenses}
+            handleAddExpense={handleAddExpense}
+            saving={saving}
+            refreshAll={refreshAll}
+          />
+        )}
+        
+        {/* TAB: Deposits */}
+        {activeTab === "deposits" && (
+          <DepositsTab
+            deposits={deposits}
+            depositsByCurrency={depositsByCurrency}
+          />
+        )}
+        
+        {/* TAB: Analytics */}
+        {activeTab === "analytics" && (
+          <AnalyticsTab
+            orders={orders}
+            payoutsStats={payoutsStats}
+            deposits={deposits}
+            orderStats={orderStats}
+          />
+        )}
+        
+        {/* TAB: Clients */}
+        {activeTab === "clients" && (
+          <ClientsTab />
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// TAB: OPERATIONS (Main tab)
+// ============================================================
+function OperationsTab({
+  orders, selectedOrderId, setSelectedOrderId, selectedOrder, orderSnapshot,
+  orderDeposit, payments, damageFees, lateFeeData, timeline,
+  searchQuery, setSearchQuery, saving, handlePayment, refreshAll,
+  payoutsStats, depositsByCurrency, orderStats, generateDocument,
+  selectedPayerProfile, payerProfiles, orderPayerOptions, setOrderPayer,
+  matchedClient, clientPayers, selectedClientPayer, setSelectedClientPayer,
+  clientSearching, linkOrderToClient
+}) {
+  // Payment form state
+  const [payType, setPayType] = useState("rent");
+  const [method, setMethod] = useState("cash");
+  const [amount, setAmount] = useState("");
+  const [additionalName, setAdditionalName] = useState("");
+  const [depositCurrency, setDepositCurrency] = useState("UAH");
+  
+  // Damage/Late forms
+  const [newDamageAmount, setNewDamageAmount] = useState("");
+  const [newDamageNote, setNewDamageNote] = useState("");
+  const [newLateAmount, setNewLateAmount] = useState("");
+  const [newLateNote, setNewLateNote] = useState("");
+  
+  const getOrderBadge = (order) => {
+    const rentDue = Math.max(0, (order.total_rental || 0) - (order.rent_paid || 0));
+    const hasDamage = (order.damage_due || 0) > 0;
+    if (hasDamage) return { kind: "warn", text: `⚠️ ${money(order.damage_due)}` };
+    if (rentDue > 0) return { kind: "pending", text: `⏳ ${money(rentDue)}` };
+    return { kind: "ok", text: "✓ OK" };
+  };
+  
+  const needsName = payType === "additional";
+  const needsCurrency = payType === "deposit_in";
+  const canSubmit = amount.trim().length > 0 && Number(amount) > 0 && (!needsName || additionalName.trim().length > 2);
+  
+  const onSubmitPayment = async () => {
+    const extraData = {};
+    if (payType === "additional") extraData.description = additionalName;
+    if (payType === "deposit_in") extraData.currency = depositCurrency;
+    
+    const success = await handlePayment(payType, amount, method, extraData);
+    if (success) {
+      setAmount("");
+      setAdditionalName("");
+    }
+  };
+  
+  // Calculate totals with discount
+  const totals = useMemo(() => {
+    if (!selectedOrder) return null;
+    const discount = selectedOrder.discount_amount || 0;
+    const serviceFee = selectedOrder.service_fee || 0;
+    const totalWithServiceFee = selectedOrder.total_rental + serviceFee;
+    const totalAfterDiscount = totalWithServiceFee - discount;
+    const toPay = Math.max(0, totalAfterDiscount - (selectedOrder.rent_paid || 0));
+    return { discount, serviceFee, totalWithServiceFee, totalAfterDiscount, toPay };
+  }, [selectedOrder]);
+  
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      {/* LEFT: Cash summary + Orders list */}
+      <div className="lg:col-span-3 space-y-4">
+        {/* Mini Cash Summary */}
+        <Card title="📊 Каси">
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-slate-600">💵 Готівка</span>
+              <span className="font-bold text-emerald-600">{money(payoutsStats?.total_cash_balance || 0)}</span>
             </div>
-            <div className="p-4 space-y-4">
-              <div>
-                <label className="text-xs text-slate-500 mb-1 block">Опис *</label>
-                <Input
-                  value={expenseDescription}
-                  onChange={(e) => setExpenseDescription(e.target.value)}
-                  placeholder={operationType === "deposit" 
-                    ? "Джерело внесення..." 
-                    : expenseType.includes("rent") 
-                      ? "Оплата приміщення, комунальні..." 
-                      : "Фарба, реставрація, расходники..."
-                  }
-                />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 mb-1 block">Сума (₴) *</label>
-                <Input
-                  value={expenseAmount}
-                  onChange={(e) => setExpenseAmount(e.target.value)}
-                  placeholder="0"
-                  inputMode="decimal"
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button variant="ghost" className="flex-1" onClick={() => setShowExpenseModal(false)}>
-                  Скасувати
-                </Button>
-                <Button 
-                  className={cn("flex-1", operationType === "deposit" && "!bg-emerald-600 hover:!bg-emerald-700")}
-                  disabled={saving || !expenseAmount || !expenseDescription.trim()}
-                  onClick={handleAddExpense}
-                >
-                  {saving ? "..." : operationType === "deposit" ? "Внести" : "Додати витрату"}
-                </Button>
-              </div>
+            <div className="flex justify-between">
+              <span className="text-slate-600">🏦 Безготівка</span>
+              <span className="font-bold text-blue-600">{money(payoutsStats?.bank_balance || 0)}</span>
+            </div>
+            <div className="flex justify-between pt-2 border-t border-slate-100">
+              <span className="text-slate-600">🔒 Застави</span>
+              <span className="font-bold text-amber-600">
+                ₴{depositsByCurrency.UAH.toLocaleString()}
+                {depositsByCurrency.USD > 0 && ` + $${depositsByCurrency.USD.toFixed(0)}`}
+              </span>
             </div>
           </div>
-        </div>
-      )}
-      
-      {/* All Operations Modal */}
-      {showOperationsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-              <h3 className="font-semibold">📋 Всі фінансові операції</h3>
-              <button onClick={() => setShowOperationsModal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
-            </div>
-            <div className="p-4 overflow-y-auto flex-1">
-              {allExpenses.length === 0 ? (
-                <div className="text-center text-slate-500 py-8">Немає операцій</div>
-              ) : (
-                <div className="space-y-2">
-                  {allExpenses.map((exp) => {
-                    const isDeposit = exp.expense_type === "income" || exp.category?.includes("DEPOSIT");
-                    return (
-                    <div key={exp.id} className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2">
-                      <div>
-                        <div className="text-sm font-medium text-slate-900">{exp.description}</div>
-                        <div className="text-xs text-slate-500">
-                          {exp.category?.includes("RENT") ? "Оренда" : "Шкода"} · 
-                          {exp.category?.includes("BANK") ? " 🏦" : " 💵"} · 
-                          {isDeposit ? "внесення" : "витрата"} · {fmtDate(exp.created_at)}
-                        </div>
-                      </div>
-                      <div className={cn("text-sm font-bold", isDeposit ? "text-emerald-600" : "text-rose-600")}>
-                        {isDeposit ? "+" : "-"}{money(exp.amount)}
-                      </div>
+        </Card>
+        
+        {/* Orders List */}
+        <Card title="📋 Ордери" right={<span className="text-xs text-slate-500">{orders.length}</span>}>
+          <div className="mb-3">
+            <Input 
+              placeholder="код / клієнт / телефон" 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2 max-h-[450px] overflow-y-auto">
+            {orders.length === 0 ? (
+              <div className="text-center text-slate-500 py-4">Немає ордерів</div>
+            ) : (
+              orders.map((o) => {
+                const badge = getOrderBadge(o);
+                const isSelected = o.order_id === selectedOrderId;
+                return (
+                  <button
+                    key={o.order_id}
+                    onClick={() => setSelectedOrderId(o.order_id)}
+                    className={cn(
+                      "w-full rounded-xl border px-3 py-2 text-left transition",
+                      isSelected 
+                        ? "border-slate-900 bg-slate-50 ring-1 ring-slate-900" 
+                        : "border-slate-200 bg-white hover:bg-slate-50"
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-semibold text-slate-900">#{o.order_number}</div>
+                      <Badge kind={badge.kind}>{badge.text}</Badge>
                     </div>
-                  );
-                  })}
+                    <div className="text-xs text-slate-500">{o.customer_name || o.client_name}</div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </Card>
+      </div>
+      
+      {/* CENTER: Selected Order */}
+      <div className="lg:col-span-6 space-y-4">
+        {selectedOrder ? (
+          <>
+            {/* Order Header */}
+            <Card
+              title={
+                <div className="flex items-center gap-2">
+                  <span>🔍 Ордер</span>
+                  <span className="text-slate-500 font-medium">
+                    #{selectedOrder.order_number} · {selectedOrder.customer_name || selectedOrder.client_name}
+                  </span>
+                </div>
+              }
+              right={<Badge kind={getOrderBadge(selectedOrder).kind}>{selectedOrder.status}</Badge>}
+            >
+              {/* KPI Row */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                  <div className="text-xs text-slate-500">Нараховано</div>
+                  <div className="text-lg font-bold">{money(totals?.totalWithServiceFee || selectedOrder.total_rental)}</div>
+                  {totals?.serviceFee > 0 && (
+                    <div className="text-xs text-amber-600">+ {selectedOrder.service_fee_name || "Дод. послуга"} {money(totals.serviceFee)}</div>
+                  )}
+                  {totals?.discount > 0 && (
+                    <div className="text-xs text-emerald-600">− знижка {money(totals.discount)}</div>
+                  )}
+                </div>
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                  <div className="text-xs text-slate-500">Оплачено</div>
+                  <div className="text-lg font-bold text-emerald-600">{money(selectedOrder.rent_paid)}</div>
+                </div>
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                  <div className="text-xs text-slate-500">Застава</div>
+                  <div className="text-lg font-bold">{money(selectedOrder.deposit_held)}</div>
+                </div>
+                <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
+                  <div className="text-xs text-slate-500">До сплати</div>
+                  <div className={cn("text-lg font-bold", totals?.toPay > 0 ? "text-amber-600" : "text-emerald-600")}>
+                    {money(totals?.toPay || 0)}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Timeline */}
+              {timeline.length > 0 && (
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 mb-4">
+                  <div className="text-xs font-semibold text-slate-600 mb-3">ТАЙМЛАЙН ОПЕРАЦІЙ</div>
+                  <Timeline items={timeline} />
                 </div>
               )}
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {/* Payer Profile Modal */}
-      {showPayerModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-              <h3 className="font-semibold">🏢 Профіль платника</h3>
-              <button onClick={() => setShowPayerModal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
-            </div>
-            <div className="p-4 space-y-4">
-              {/* Existing profiles */}
-              {payerProfiles.length > 0 && (
+            </Card>
+            
+            {/* Payment Form - with SEPARATE buttons for Deposit and Advance */}
+            <Card title="💳 Прийняти оплату">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <div className="text-xs font-semibold text-slate-500 mb-2">ІСНУЮЧІ ПРОФІЛІ</div>
-                  <div className="space-y-2 max-h-40 overflow-y-auto">
-                    {payerProfiles.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => {
-                          handleAssignPayerProfile(p.id);
-                          setShowPayerModal(false);
-                        }}
-                        className={cn(
-                          "w-full text-left rounded-xl border px-3 py-2 transition",
-                          selectedPayerProfile?.id === p.id
-                            ? "border-blue-500 bg-blue-50"
-                            : "border-slate-200 hover:bg-slate-50"
-                        )}
-                      >
-                        <div className="text-sm font-semibold">{p.company_name}</div>
-                        <div className="text-xs text-slate-500">
-                          {PAYER_TYPE_LABELS[p.payer_type]} · {p.edrpou || "—"}
+                  <div className="text-xs text-slate-500 mb-1">Тип</div>
+                  <Select
+                    value={payType}
+                    onChange={setPayType}
+                    options={[
+                      { value: "rent", label: "💵 Оренда" },
+                      { value: "additional", label: "➕ Донарахування" },
+                      { value: "damage", label: "💔 Шкода" },
+                      { value: "late", label: "⏰ Прострочення" },
+                    ]}
+                  />
+                </div>
+                
+                <div>
+                  <div className="text-xs text-slate-500 mb-1">Метод</div>
+                  <Select
+                    value={method}
+                    onChange={setMethod}
+                    options={[
+                      { value: "cash", label: "Готівка" },
+                      { value: "bank", label: "Безготівка" },
+                    ]}
+                  />
+                </div>
+                
+                {needsName && (
+                  <div className="sm:col-span-2">
+                    <div className="text-xs text-slate-500 mb-1">Назва *</div>
+                    <Input
+                      value={additionalName}
+                      onChange={(e) => setAdditionalName(e.target.value)}
+                      placeholder="Доставка, упаковка..."
+                    />
+                  </div>
+                )}
+                
+                <div>
+                  <div className="text-xs text-slate-500 mb-1">Сума (₴)</div>
+                  <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" inputMode="decimal" />
+                </div>
+                
+                <div className="flex items-end">
+                  <Button className="w-full" disabled={!canSubmit || saving} onClick={onSubmitPayment}>
+                    {saving ? "..." : "Зарахувати"}
+                  </Button>
+                </div>
+              </div>
+              
+              {/* SEPARATE BUTTONS: Deposit vs Advance */}
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <div className="text-xs font-semibold text-slate-600 mb-3">ЗАСТАВА / ПЕРЕДПЛАТА</div>
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Deposit Button */}
+                  <DepositAdvanceButton
+                    type="deposit"
+                    orderDeposit={orderDeposit}
+                    expectedAmount={selectedOrder.total_deposit}
+                    handlePayment={handlePayment}
+                    saving={saving}
+                    method={method}
+                  />
+                  
+                  {/* Advance Button */}
+                  <DepositAdvanceButton
+                    type="advance"
+                    handlePayment={handlePayment}
+                    saving={saving}
+                    method={method}
+                  />
+                </div>
+              </div>
+            </Card>
+            
+            {/* Deposit Details */}
+            {orderDeposit && (
+              <Card title="🔒 Застава">
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-600">Прийнято</span>
+                    <span className="font-semibold">
+                      {orderDeposit.currency === "USD" ? "$" : orderDeposit.currency === "EUR" ? "€" : "₴"}
+                      {(orderDeposit.actual_amount || orderDeposit.held_amount).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-600">Використано</span>
+                    <span className="font-semibold text-rose-600">
+                      -{orderDeposit.currency === "USD" ? "$" : orderDeposit.currency === "EUR" ? "€" : "₴"}
+                      {(orderDeposit.used_amount || 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-600">Повернуто</span>
+                    <span className="font-semibold text-blue-600">
+                      {orderDeposit.currency === "USD" ? "$" : orderDeposit.currency === "EUR" ? "€" : "₴"}
+                      {(orderDeposit.refunded_amount || 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm pt-2 border-t border-slate-200">
+                    <span className="text-slate-700 font-medium">Доступно</span>
+                    <span className="font-bold text-emerald-600">
+                      {orderDeposit.currency === "USD" ? "$" : orderDeposit.currency === "EUR" ? "€" : "₴"}
+                      {(orderDeposit.available || (orderDeposit.held_amount - (orderDeposit.used_amount || 0) - (orderDeposit.refunded_amount || 0))).toLocaleString()}
+                    </span>
+                  </div>
+                  
+                  {/* Refund button */}
+                  {(orderDeposit.available || (orderDeposit.held_amount - (orderDeposit.used_amount || 0) - (orderDeposit.refunded_amount || 0))) > 0 && (
+                    <Button
+                      variant="success"
+                      className="w-full mt-3"
+                      disabled={saving}
+                      onClick={async () => {
+                        const avail = orderDeposit.available || (orderDeposit.held_amount - (orderDeposit.used_amount || 0) - (orderDeposit.refunded_amount || 0));
+                        if (!window.confirm(`Повернути заставу: ${orderDeposit.currency === "USD" ? "$" : orderDeposit.currency === "EUR" ? "€" : "₴"}${avail}?`)) return;
+                        await handlePayment("deposit_out", avail, "cash");
+                      }}
+                    >
+                      💸 Повернути заставу
+                    </Button>
+                  )}
+                </div>
+              </Card>
+            )}
+            
+            {/* Damage Section */}
+            <Card title="💔 Шкода" className="border-rose-200 bg-rose-50/50">
+              {damageFees.items?.length > 0 && (
+                <div className="mb-3">
+                  <div className="text-xs text-rose-700 mb-2 font-medium">Зафіксовано:</div>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {damageFees.items.map((d, i) => {
+                      const qty = d.qty || 1
+                      const feePerItem = d.fee_per_item || (qty > 0 ? d.fee / qty : d.fee)
+                      return (
+                        <div key={i} className="flex items-center justify-between text-sm bg-white rounded-lg p-2">
+                          <div className="flex-1 min-w-0">
+                            <span className="text-rose-800 font-medium">{d.name}</span>
+                            {qty > 1 && <span className="text-rose-600 font-bold ml-1">×{qty} шт</span>}
+                            <div className="text-xs text-rose-600/80 truncate">{d.damage_type}</div>
+                          </div>
+                          <div className="text-right flex-shrink-0 ml-2">
+                            <div className="font-semibold text-rose-600">{money(d.fee)}</div>
+                            {qty > 1 && (
+                              <div className="text-[10px] text-rose-500">{qty} × {money(feePerItem)}</div>
+                            )}
+                          </div>
                         </div>
-                      </button>
-                    ))}
+                      )
+                    })}
+                  </div>
+                  <div className="mt-2 text-right text-sm">
+                    <span className="text-rose-700">Всього: </span>
+                    <span className="font-bold text-rose-800">{money(damageFees.total_fee)}</span>
+                    {damageFees.paid_amount > 0 && (
+                      <span className="text-emerald-600 ml-2">(оплачено {money(damageFees.paid_amount)})</span>
+                    )}
                   </div>
                 </div>
               )}
               
-              {/* New profile form */}
-              <div className="border-t border-slate-200 pt-4">
-                <div className="text-xs font-semibold text-slate-500 mb-3">НОВИЙ ПРОФІЛЬ</div>
+              {damageFees.due_amount > 0 && (
+                <div className="p-3 bg-rose-100 rounded-xl mb-3">
+                  <div className="text-rose-800 font-semibold">До сплати: {money(damageFees.due_amount)}</div>
+                </div>
+              )}
+              
+              {/* Add damage */}
+              <div className="flex gap-2">
+                <Input 
+                  type="number"
+                  placeholder="Сума ₴"
+                  value={newDamageAmount}
+                  onChange={(e) => setNewDamageAmount(e.target.value)}
+                  className="flex-1"
+                />
+                <Input 
+                  placeholder="Опис"
+                  value={newDamageNote}
+                  onChange={(e) => setNewDamageNote(e.target.value)}
+                  className="flex-1"
+                />
+                <Button
+                  variant="danger"
+                  size="sm"
+                  disabled={!newDamageAmount || saving}
+                  onClick={async () => {
+                    const success = await handlePayment("damage", newDamageAmount, "cash", { note: newDamageNote });
+                    if (success) {
+                      setNewDamageAmount("");
+                      setNewDamageNote("");
+                    }
+                  }}
+                >
+                  Оплатити
+                </Button>
+              </div>
+            </Card>
+            
+            {/* Late fees */}
+            <Card title="⏰ Прострочення" className="border-amber-200 bg-amber-50/50">
+              {lateFeeData.due > 0 && (
+                <div className="p-3 bg-amber-100 rounded-xl mb-3">
+                  <div className="text-amber-800 font-semibold">До сплати: {money(lateFeeData.due)}</div>
+                </div>
+              )}
+              
+              {lateFeeData.items?.length > 0 && (
+                <div className="mb-3 space-y-1">
+                  {lateFeeData.items.map((l, i) => (
+                    <div key={i} className="flex justify-between text-sm">
+                      <span className="text-amber-700">{l.note || "Прострочення"}</span>
+                      <span className={cn("font-semibold", l.status === "pending" ? "text-amber-600" : "text-emerald-600")}>
+                        {money(l.amount)} {l.status !== "pending" && "✓"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              <div className="flex gap-2">
+                <Input 
+                  type="number"
+                  placeholder="Сума ₴"
+                  value={newLateAmount}
+                  onChange={(e) => setNewLateAmount(e.target.value)}
+                  className="flex-1"
+                />
+                <Input 
+                  placeholder="Опис"
+                  value={newLateNote}
+                  onChange={(e) => setNewLateNote(e.target.value)}
+                  className="flex-1"
+                />
+                <Button
+                  variant="warn"
+                  size="sm"
+                  disabled={!newLateAmount || saving}
+                  onClick={async () => {
+                    const success = await handlePayment("late", newLateAmount, "cash", { note: newLateNote });
+                    if (success) {
+                      setNewLateAmount("");
+                      setNewLateNote("");
+                    }
+                  }}
+                >
+                  Оплатити
+                </Button>
+              </div>
+            </Card>
+          </>
+        ) : (
+          <Card>
+            <div className="text-center text-slate-500 py-8">Виберіть ордер зі списку</div>
+          </Card>
+        )}
+      </div>
+      
+      {/* RIGHT: Statistics & Documents */}
+      <div className="lg:col-span-3 space-y-4">
+        {/* Stats */}
+        <Card title="📊 Статистика">
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-slate-600">Ордерів</span>
+              <span className="font-semibold">{orderStats.total}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-600">Оплачено</span>
+              <span className="font-semibold text-emerald-600">{orderStats.paid}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-600">З боргом</span>
+              <span className="font-semibold text-amber-600">{orderStats.withDebt}</span>
+            </div>
+          </div>
+        </Card>
+        
+        {/* Quick Documents */}
+        {selectedOrder && (
+          <Card title="📄 Документи">
+            <div className="space-y-3">
+              {/* === CLIENT STATUS === */}
+              <div className="pb-3 border-b border-slate-100">
+                <div className="text-xs font-medium text-slate-600 mb-2">👤 Клієнт:</div>
                 
-                <div className="space-y-3">
-                  <div>
-                    <label className="text-xs text-slate-500 mb-1 block">Тип платника *</label>
-                    <Select
-                      value={payerForm.payer_type}
-                      onChange={(v) => setPayerForm(prev => ({ ...prev, payer_type: v }))}
-                      options={[
-                        { value: "fop_simple", label: "ФОП (спрощена система)" },
-                        { value: "fop_general", label: "ФОП (загальна система)" },
-                        { value: "llc_simple", label: "ТОВ (спрощена система)" },
-                        { value: "llc_general", label: "ТОВ (загальна система)" },
-                      ]}
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="text-xs text-slate-500 mb-1 block">
-                      {payerForm.payer_type.startsWith("llc") ? "Назва компанії *" : "ПІБ ФОП *"}
-                    </label>
-                    <Input
-                      value={payerForm.company_name}
-                      onChange={(e) => setPayerForm(prev => ({ ...prev, company_name: e.target.value }))}
-                      placeholder={payerForm.payer_type.startsWith("llc") ? "ТОВ «Назва»" : "Трофімова Вікторія Сергіївна"}
-                    />
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs text-slate-500 mb-1 block">
-                        {payerForm.payer_type.startsWith("llc") ? "ЄДРПОУ" : "ДРФО (ІПН)"}
-                      </label>
-                      <Input
-                        value={payerForm.edrpou}
-                        onChange={(e) => setPayerForm(prev => ({ ...prev, edrpou: e.target.value }))}
-                        placeholder={payerForm.payer_type.startsWith("llc") ? "12345678" : "3505100720"}
-                      />
+                {clientSearching ? (
+                  <div className="text-xs text-slate-500 animate-pulse">Пошук клієнта...</div>
+                ) : matchedClient?.is_new ? (
+                  // New client - not found in system
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-2">
+                    <div className="text-xs text-amber-700 font-medium">⚠️ Новий клієнт</div>
+                    <div className="text-xs text-amber-600 mt-1">
+                      {matchedClient.suggested_name || selectedOrder.client_name || selectedOrder.customer_name}
                     </div>
-                    <div>
-                      <label className="text-xs text-slate-500 mb-1 block">Платник ПДВ</label>
-                      <button
-                        onClick={() => setPayerForm(prev => ({ ...prev, is_vat_payer: !prev.is_vat_payer }))}
-                        className={cn(
-                          "h-10 w-full rounded-xl border text-sm font-medium transition",
-                          payerForm.is_vat_payer
-                            ? "border-emerald-500 bg-emerald-50 text-emerald-700"
-                            : "border-slate-200 bg-white text-slate-600"
-                        )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 w-full text-xs h-7"
+                      onClick={() => {
+                        // Open create client modal or navigate to clients tab
+                        window.dispatchEvent(new CustomEvent('create-client-for-order', { 
+                          detail: { 
+                            name: matchedClient.suggested_name || selectedOrder.customer_name,
+                            phone: matchedClient.suggested_phone || selectedOrder.customer_phone,
+                            orderId: selectedOrder.order_id
+                          }
+                        }));
+                      }}
+                    >
+                      ➕ Створити клієнта
+                    </Button>
+                  </div>
+                ) : matchedClient ? (
+                  // Found client
+                  <div className="bg-slate-50 rounded-lg p-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-medium text-slate-800">{matchedClient.full_name}</div>
+                        <div className="text-xs text-slate-500">{matchedClient.email}</div>
+                        <div className="text-xs text-slate-500">
+                          {matchedClient.payer_type === 'individual' && '👤 Фіз. особа'}
+                          {matchedClient.payer_type === 'fop' && '🏪 ФОП'}
+                          {matchedClient.payer_type === 'fop_simple' && '🏪 ФОП (спрощена)'}
+                          {matchedClient.payer_type === 'tov' && '🏢 ТОВ'}
+                        </div>
+                      </div>
+                      {!selectedOrder.client_user_id && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          className="text-xs h-7"
+                          onClick={() => linkOrderToClient(selectedOrder.order_id, matchedClient.id)}
+                          disabled={saving}
+                        >
+                          Прив'язати
+                        </Button>
+                      )}
+                    </div>
+                    
+                    {/* MA Status */}
+                    <div className="mt-2 pt-2 border-t border-slate-200">
+                      {matchedClient.has_agreement ? (
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <span className={cn(
+                              "text-xs px-2 py-0.5 rounded-full",
+                              matchedClient.agreement_status === 'signed' ? "bg-emerald-100 text-emerald-700" :
+                              matchedClient.agreement_status === 'draft' ? "bg-amber-100 text-amber-700" :
+                              "bg-slate-100 text-slate-600"
+                            )}>
+                              {matchedClient.agreement_status === 'signed' ? '✅ MA підписано' :
+                               matchedClient.agreement_status === 'draft' ? '⏳ MA чернетка' :
+                               matchedClient.agreement_status}
+                            </span>
+                            <span className="text-xs text-slate-500 ml-2">{matchedClient.agreement_number}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-amber-600">
+                          ⚠️ Рамковий договір не створено
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="ml-2 text-xs h-6 text-amber-700"
+                            onClick={() => {
+                              // Navigate to clients tab to create MA
+                              window.dispatchEvent(new CustomEvent('navigate-to-client', { 
+                                detail: { clientId: matchedClient.id }
+                              }));
+                            }}
+                          >
+                            Створити →
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-500 italic">
+                    Оберіть ордер для пошуку клієнта
+                  </div>
+                )}
+              </div>
+              
+              {/* === DOCUMENT GENERATION === */}
+              <div className="text-xs font-medium text-slate-600 mb-2 mt-2">📄 Документи ордера:</div>
+              
+              {(() => {
+                const hasSignedMA = matchedClient?.agreement_status === 'signed';
+                const clientPayerType = matchedClient?.payer_type || 'individual';
+                
+                // Determine effective payer type (from selected payer or client default)
+                const effectivePayerType = selectedClientPayer?.type || selectedClientPayer?.payer_type || clientPayerType;
+                const isLegalEntity = ['fop', 'fop_simple', 'tov'].includes(effectivePayerType);
+                
+                const PAYER_TYPE_LABELS = {
+                  'individual': '👤 Фіз. особа',
+                  'fop': '🏪 ФОП',
+                  'fop_simple': '🏪 ФОП (спрощена)',
+                  'tov': '🏢 ТОВ'
+                };
+                
+                return (
+                  <div className="space-y-2">
+                    {/* Payer selector if client has multiple payers */}
+                    {clientPayers && clientPayers.length > 0 && (
+                      <div className="p-2 bg-slate-50 rounded-lg border border-slate-200 mb-2">
+                        <div className="text-[10px] text-slate-500 mb-1">Платник для документів:</div>
+                        <select
+                          value={selectedClientPayer?.id || ''}
+                          onChange={(e) => {
+                            const payer = clientPayers.find(p => p.id === parseInt(e.target.value));
+                            setSelectedClientPayer(payer || null);
+                          }}
+                          className="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white"
+                        >
+                          <option value="">— {PAYER_TYPE_LABELS[clientPayerType]} (клієнт) —</option>
+                          {clientPayers.map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.display_name || p.company_name} ({PAYER_TYPE_LABELS[p.type || p.payer_type]})
+                              {p.is_default && ' ⭐'}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    
+                    {/* Base documents - always available */}
+                    <div className="space-y-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full justify-start text-xs h-8"
+                        onClick={() => {
+                          if (selectedOrder) {
+                            window.open(`${BACKEND_URL}/api/documents/estimate/${selectedOrder.order_id}/preview`, '_blank');
+                          }
+                        }}
+                        disabled={!selectedOrder}
                       >
-                        {payerForm.is_vat_payer ? "✓ Так" : "Ні"}
-                      </button>
+                        📄 Кошторис
+                      </Button>
+                      
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full justify-start text-xs h-8"
+                        onClick={() => {
+                          if (selectedOrder) {
+                            const execType = effectivePayerType === 'fop' || effectivePayerType === 'fop_simple' ? 'fop' : 'tov';
+                            window.open(`${BACKEND_URL}/api/documents/invoice-offer/${selectedOrder.order_id}/preview?executor_type=${execType}`, '_blank');
+                          }
+                        }}
+                        disabled={!selectedOrder}
+                      >
+                        💵 Рахунок-оферта
+                      </Button>
+                    </div>
+                    
+                    {/* Legal entity / FOP specific documents */}
+                    {isLegalEntity && hasSignedMA && (
+                      <div className="border-t border-slate-200 pt-2 mt-2 space-y-1">
+                        <div className="text-[10px] text-slate-500 mb-1">
+                          Юридичні документи ({PAYER_TYPE_LABELS[effectivePayerType]}):
+                        </div>
+                        
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full justify-start text-xs h-8 border-emerald-200 text-emerald-700 hover:bg-emerald-50"
+                          onClick={() => {
+                            if (selectedOrder && matchedClient?.agreement_id) {
+                              window.open(`${BACKEND_URL}/api/documents/annex/${selectedOrder.order_id}/preview?agreement_id=${matchedClient.agreement_id}`, '_blank');
+                            }
+                          }}
+                          disabled={!selectedOrder || !hasSignedMA}
+                        >
+                          📎 Додаток до договору
+                        </Button>
+                        
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full justify-start text-xs h-8"
+                          onClick={() => generateDocument('invoice_legal')}
+                          disabled={!selectedOrder}
+                        >
+                          📄 Рахунок (юр. особа)
+                        </Button>
+                        
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full justify-start text-xs h-8"
+                          onClick={() => generateDocument('service_act')}
+                          disabled={!selectedOrder || !hasSignedMA}
+                        >
+                          📋 Акт виконаних робіт
+                        </Button>
+                      </div>
+                    )}
+                    
+                    {/* Acts - always available */}
+                    <div className="border-t border-slate-200 pt-2 mt-2 space-y-1">
+                      <div className="text-[10px] text-slate-500 mb-1">Акти:</div>
+                      
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start text-xs h-8"
+                        onClick={() => {
+                          if (selectedOrder) {
+                            const execType = effectivePayerType === 'fop' || effectivePayerType === 'fop_simple' ? 'fop' : 'tov';
+                            window.open(`${BACKEND_URL}/api/documents/issue-act/${selectedOrder.order_id}/preview?executor_type=${execType}`, '_blank');
+                          }
+                        }}
+                        disabled={!selectedOrder}
+                      >
+                        📦 Акт видачі
+                      </Button>
+                      
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start text-xs h-8"
+                        onClick={() => generateDocument('return_act')}
+                        disabled={!selectedOrder}
+                      >
+                        📦 Акт повернення
+                      </Button>
+                      
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start text-xs h-8"
+                        onClick={() => generateDocument('defect_act')}
+                        disabled={!selectedOrder}
+                      >
+                        ⚠️ Дефектний акт
+                      </Button>
+                      
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start text-xs h-8"
+                        onClick={() => generateDocument('deposit_settlement_act')}
+                        disabled={!selectedOrder}
+                      >
+                        💰 Акт взаєморозрахунків
+                      </Button>
+                    </div>
+                    
+                    {/* Warning if FOP/TOV but no MA */}
+                    {isLegalEntity && !hasSignedMA && (
+                      <div className="mt-2 p-2 bg-amber-50 rounded-lg text-xs text-amber-700">
+                        ⚠️ Для Додатку та Акту виконаних робіт потрібен підписаний договір.
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="mt-1 text-xs h-6 text-amber-700"
+                          onClick={() => {
+                            window.dispatchEvent(new CustomEvent('navigate-to-client', { 
+                              detail: { clientId: matchedClient.id }
+                            }));
+                          }}
+                        >
+                          Перейти до клієнта →
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// COMPONENT: Deposit/Advance Button (separated)
+// ============================================================
+function DepositAdvanceButton({ type, orderDeposit, expectedAmount, handlePayment, saving, method }) {
+  const [showForm, setShowForm] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("UAH");
+  const [note, setNote] = useState("");
+  
+  const isDeposit = type === "deposit";
+  const hasDeposit = isDeposit && orderDeposit;
+  
+  const onSubmit = async () => {
+    if (!amount || Number(amount) <= 0) return;
+    
+    const extraData = isDeposit ? { currency } : { note: note || "Передплата" };
+    const success = await handlePayment(
+      isDeposit ? "deposit_in" : "advance",
+      amount,
+      method,
+      extraData
+    );
+    
+    if (success) {
+      setAmount("");
+      setNote("");
+      setShowForm(false);
+    }
+  };
+  
+  if (!showForm) {
+    return (
+      <div className="space-y-2">
+        <Button
+          variant={isDeposit ? "deposit" : "advance"}
+          className="w-full"
+          onClick={() => setShowForm(true)}
+          disabled={saving}
+        >
+          {isDeposit ? "🔒 Прийняти заставу" : "💜 Прийняти передплату"}
+        </Button>
+        {hasDeposit && (
+          <div className="text-xs text-center text-blue-600">
+            Вже прийнято: {orderDeposit.display_amount || money(orderDeposit.held_amount)}
+          </div>
+        )}
+        {isDeposit && expectedAmount > 0 && !hasDeposit && (
+          <div className="text-xs text-center text-slate-500">
+            Очікується: {money(expectedAmount)}
+          </div>
+        )}
+      </div>
+    );
+  }
+  
+  return (
+    <div className="p-3 rounded-xl border-2 border-dashed" style={{ borderColor: isDeposit ? "#3b82f6" : "#8b5cf6" }}>
+      <div className="text-xs font-semibold mb-2" style={{ color: isDeposit ? "#3b82f6" : "#8b5cf6" }}>
+        {isDeposit ? "🔒 ЗАСТАВА" : "💜 ПЕРЕДПЛАТА"}
+      </div>
+      
+      <div className="space-y-2">
+        <Input
+          type="number"
+          placeholder="Сума"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+        
+        {isDeposit && (
+          <Select
+            value={currency}
+            onChange={setCurrency}
+            options={[
+              { value: "UAH", label: "₴ UAH" },
+              { value: "USD", label: "$ USD" },
+              { value: "EUR", label: "€ EUR" },
+            ]}
+          />
+        )}
+        
+        {!isDeposit && (
+          <Input
+            placeholder="Примітка (опціонально)"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        )}
+        
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="flex-1"
+            onClick={() => setShowForm(false)}
+          >
+            Скасувати
+          </Button>
+          <Button
+            variant={isDeposit ? "deposit" : "advance"}
+            size="sm"
+            className="flex-1"
+            disabled={!amount || saving}
+            onClick={onSubmit}
+          >
+            {saving ? "..." : "Прийняти"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// TAB: DOCUMENTS
+// ============================================================
+function DocumentsTab({ orders, selectedOrderId, setSelectedOrderId, selectedOrder, documents, generateDocument, selectedPayerProfile, setSelectedPayerProfile, payerProfiles }) {
+  // === State for Phase 3 Documents Engine ===
+  const [activeSubTab, setActiveSubTab] = useState("documents"); // documents | agreements | annexes
+  const [masterAgreements, setMasterAgreements] = useState([]);
+  const [orderAnnexes, setOrderAnnexes] = useState([]);
+  const [availableDocs, setAvailableDocs] = useState([]);
+  const [loadingPolicy, setLoadingPolicy] = useState(false);
+  const [creatingAgreement, setCreatingAgreement] = useState(false);
+  const [generatingAnnex, setGeneratingAnnex] = useState(false);
+  
+  // === State for Document Preview Modal ===
+  const [previewModal, setPreviewModal] = useState({
+    isOpen: false,
+    docType: null,
+    orderId: null,
+    payerProfileId: null,
+    agreementId: null,
+    annexId: null
+  });
+  
+  const PAYER_TYPE_LABELS = {
+    individual: "Фізична особа",
+    fop_simple: "ФОП (спрощена)",
+    fop_general: "ФОП (загальна)",
+    llc_simple: "ТОВ (спрощена)",
+    llc_general: "ТОВ (загальна)"
+  };
+  
+  const STATUS_LABELS = {
+    draft: { label: "Чернетка", color: "bg-slate-100 text-slate-600" },
+    sent: { label: "Відправлено", color: "bg-blue-100 text-blue-700" },
+    signed: { label: "Підписано", color: "bg-emerald-100 text-emerald-700" },
+    expired: { label: "Закінчився", color: "bg-rose-100 text-rose-700" },
+    generated: { label: "Згенеровано", color: "bg-blue-100 text-blue-700" },
+  };
+  
+  const CATEGORY_LABELS = {
+    quote: "Кошториси",
+    contract: "Договори",
+    annex: "Додатки",
+    act: "Акти",
+    finance: "Фінансові",
+    operations: "Операційні"
+  };
+  
+  // === Open Document Preview ===
+  const openDocumentPreview = (docType) => {
+    setPreviewModal({
+      isOpen: true,
+      docType,
+      orderId: selectedOrderId,
+      payerProfileId: selectedPayerProfile?.id,
+      agreementId: masterAgreements.find(a => a.payer_profile_id === selectedPayerProfile?.id && a.status === "signed")?.id,
+      annexId: orderAnnexes[0]?.id
+    });
+  };
+  
+  const closePreviewModal = () => {
+    setPreviewModal(prev => ({ ...prev, isOpen: false }));
+  };
+  
+  // === Load master agreements ===
+  useEffect(() => {
+    const loadAgreements = async () => {
+      try {
+        const res = await authFetch(`${BACKEND_URL}/api/agreements`);
+        const data = await res.json();
+        setMasterAgreements(data.agreements || []);
+      } catch (e) {
+        console.error("Failed to load agreements:", e);
+      }
+    };
+    loadAgreements();
+  }, []);
+  
+  // === Load annexes for selected order ===
+  useEffect(() => {
+    if (!selectedOrderId) {
+      setOrderAnnexes([]);
+      return;
+    }
+    const loadAnnexes = async () => {
+      console.log(`[DocumentsTab] Loading annexes for order ${selectedOrderId}...`);
+      try {
+        const res = await authFetch(`${BACKEND_URL}/api/annexes?order_id=${selectedOrderId}`);
+        const data = await res.json();
+        console.log(`[DocumentsTab] Loaded ${data.annexes?.length || 0} annexes`);
+        setOrderAnnexes(data.annexes || []);
+      } catch (e) {
+        console.error("Failed to load annexes:", e);
+      }
+    };
+    loadAnnexes();
+  }, [selectedOrderId]);
+  
+  // === Load available documents based on policy ===
+  useEffect(() => {
+    if (!selectedOrderId) {
+      setAvailableDocs([]);
+      return;
+    }
+    const loadPolicy = async () => {
+      setLoadingPolicy(true);
+      try {
+        const res = await authFetch(`${BACKEND_URL}/api/documents/policy/available?order_id=${selectedOrderId}`);
+        const data = await res.json();
+        setAvailableDocs(data.documents || []);
+      } catch (e) {
+        console.error("Failed to load policy:", e);
+      } finally {
+        setLoadingPolicy(false);
+      }
+    };
+    loadPolicy();
+  }, [selectedOrderId, selectedPayerProfile]);
+  
+  // === Create Master Agreement ===
+  const createMasterAgreement = async () => {
+    if (!selectedPayerProfile) {
+      alert("Виберіть профіль платника");
+      return;
+    }
+    setCreatingAgreement(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/api/agreements/create`, {
+        method: "POST",
+        body: JSON.stringify({
+          payer_profile_id: selectedPayerProfile.id,
+          template_version: "v1",
+          valid_months: 12
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Договір створено: ${data.contract_number}`);
+        // Reload agreements
+        const res2 = await authFetch(`${BACKEND_URL}/api/agreements`);
+        const data2 = await res2.json();
+        setMasterAgreements(data2.agreements || []);
+      } else {
+        alert(data.detail || "Помилка створення договору");
+      }
+    } catch (e) {
+      alert("Помилка: " + e.message);
+    } finally {
+      setCreatingAgreement(false);
+    }
+  };
+  
+  // === Generate Annex for Order ===
+  const generateAnnex = async () => {
+    if (!selectedOrderId) return;
+    setGeneratingAnnex(true);
+    try {
+      const res = await authFetch(`${BACKEND_URL}/api/annexes/generate-for-order/${selectedOrderId}`, {
+        method: "POST"
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Додаток створено: ${data.annex_number}`);
+        // Reload annexes
+        const res2 = await authFetch(`${BACKEND_URL}/api/annexes?order_id=${selectedOrderId}`);
+        const data2 = await res2.json();
+        setOrderAnnexes(data2.annexes || []);
+      } else {
+        alert(data.detail || "Помилка створення додатку");
+      }
+    } catch (e) {
+      alert("Помилка: " + e.message);
+    } finally {
+      setGeneratingAnnex(false);
+    }
+  };
+  
+  // === Sign Agreement ===
+  const signAgreement = async (agreementId) => {
+    try {
+      const res = await authFetch(`${BACKEND_URL}/api/agreements/${agreementId}`, {
+        method: "PUT",
+        body: JSON.stringify({ status: "signed" })
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Reload
+        const res2 = await authFetch(`${BACKEND_URL}/api/agreements`);
+        const data2 = await res2.json();
+        setMasterAgreements(data2.agreements || []);
+      }
+    } catch (e) {
+      alert("Помилка: " + e.message);
+    }
+  };
+  
+  // === Group available docs by category ===
+  const docsByCategory = useMemo(() => {
+    const grouped = {};
+    availableDocs.forEach(doc => {
+      if (!grouped[doc.category]) grouped[doc.category] = [];
+      grouped[doc.category].push(doc);
+    });
+    return grouped;
+  }, [availableDocs]);
+  
+  // === Render sub-tabs ===
+  const subTabs = [
+    { id: "documents", label: "📄 Документи" },
+    { id: "agreements", label: "📋 Договори" },
+    { id: "annexes", label: "📎 Додатки" }
+  ];
+  
+  return (
+    <div className="space-y-4">
+      {/* Sub-tabs */}
+      <div className="flex gap-2 border-b border-slate-200 pb-2">
+        {subTabs.map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveSubTab(tab.id)}
+            className={cn(
+              "px-4 py-2 rounded-lg text-sm font-medium transition",
+              activeSubTab === tab.id 
+                ? "bg-slate-900 text-white" 
+                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+            )}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      
+      {/* === DOCUMENTS SUB-TAB === */}
+      {activeSubTab === "documents" && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Left: Order selection */}
+          <div className="lg:col-span-3">
+            <Card title="📋 Виберіть ордер">
+              <div className="space-y-2 max-h-[500px] overflow-y-auto">
+                {orders.slice(0, 50).map(o => (
+                  <button
+                    key={o.order_id}
+                    onClick={() => setSelectedOrderId(o.order_id)}
+                    className={cn(
+                      "w-full rounded-lg border px-3 py-2 text-left transition text-sm",
+                      o.order_id === selectedOrderId 
+                        ? "border-slate-900 bg-slate-50" 
+                        : "border-slate-200 hover:bg-slate-50"
+                    )}
+                  >
+                    <div className="font-medium">#{o.order_number}</div>
+                    <div className="text-xs text-slate-500">{o.customer_name}</div>
+                    <div className="text-xs text-slate-400">{o.status}</div>
+                  </button>
+                ))}
+              </div>
+            </Card>
+          </div>
+          
+          {/* Center: Policy-based document generation */}
+          <div className="lg:col-span-6 space-y-4">
+            {selectedOrder ? (
+              <>
+                {/* Order Info */}
+                <Card title={`Ордер #${selectedOrder.order_number}`}>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-slate-500">Клієнт:</span> {selectedOrder.customer_name}
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Статус:</span> <Badge kind="info">{selectedOrder.status}</Badge>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Платник:</span>{" "}
+                      {selectedPayerProfile ? (
+                        <span className="font-medium">{selectedPayerProfile.company_name || "Фіз. особа"}</span>
+                      ) : (
+                        <span className="text-slate-400">Не вибрано</span>
+                      )}
+                    </div>
+                    {/* Contract Status Badge */}
+                    <div>
+                      <span className="text-slate-500">Договір:</span>{" "}
+                      {(() => {
+                        const agreement = masterAgreements.find(a => 
+                          a.payer_profile_id === selectedPayerProfile?.id && a.status === "signed"
+                        );
+                        if (!agreement) {
+                          return <span className="text-slate-400">—</span>;
+                        }
+                        const today = new Date();
+                        const validUntil = agreement.valid_until ? new Date(agreement.valid_until) : null;
+                        const daysUntilExpiry = validUntil ? Math.ceil((validUntil - today) / (1000 * 60 * 60 * 24)) : null;
+                        
+                        if (daysUntilExpiry !== null && daysUntilExpiry < 0) {
+                          return <span className="px-2 py-0.5 bg-rose-100 text-rose-700 text-xs rounded-full">🔴 закінч.</span>;
+                        } else if (daysUntilExpiry !== null && daysUntilExpiry <= 30) {
+                          return <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full">⚠️ {daysUntilExpiry}дн.</span>;
+                        } else {
+                          return <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs rounded-full">✅ активн.</span>;
+                        }
+                      })()}
                     </div>
                   </div>
                   
-                  <div>
-                    <label className="text-xs text-slate-500 mb-1 block">IBAN</label>
-                    <Input
-                      value={payerForm.iban}
-                      onChange={(e) => setPayerForm(prev => ({ ...prev, iban: e.target.value }))}
-                      placeholder="UA65..."
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="text-xs text-slate-500 mb-1 block">Банк</label>
-                    <Input
-                      value={payerForm.bank_name}
-                      onChange={(e) => setPayerForm(prev => ({ ...prev, bank_name: e.target.value }))}
-                      placeholder="АТ «УНІВЕРСАЛ БАНК»"
-                    />
-                  </div>
-                  
-                  {payerForm.payer_type.startsWith("llc") && (
-                    <div>
-                      <label className="text-xs text-slate-500 mb-1 block">ПІБ директора</label>
-                      <Input
-                        value={payerForm.director_name}
-                        onChange={(e) => setPayerForm(prev => ({ ...prev, director_name: e.target.value }))}
-                        placeholder="Іванов Іван Іванович"
-                      />
+                  {/* Payer Profile Selection */}
+                  {!selectedPayerProfile && payerProfiles.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-slate-100">
+                      <div className="text-xs font-semibold text-slate-500 mb-2">Виберіть платника:</div>
+                      <div className="flex flex-wrap gap-2">
+                        {payerProfiles.slice(0, 4).map(p => (
+                          <button
+                            key={p.id}
+                            onClick={() => setSelectedPayerProfile(p)}
+                            className="px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs"
+                          >
+                            {p.company_name} ({PAYER_TYPE_LABELS[p.payer_type]})
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                   
-                  <div>
-                    <label className="text-xs text-slate-500 mb-1 block">Юридична адреса</label>
-                    <Input
-                      value={payerForm.address}
-                      onChange={(e) => setPayerForm(prev => ({ ...prev, address: e.target.value }))}
-                      placeholder="м. Харків, вул. ..."
-                    />
-                  </div>
+                  {selectedPayerProfile && (
+                    <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
+                      <div className="text-sm">
+                        <span className="font-medium">{selectedPayerProfile.company_name}</span>
+                        <span className="text-slate-500 ml-2">{PAYER_TYPE_LABELS[selectedPayerProfile.payer_type]}</span>
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedPayerProfile(null)}>
+                        Змінити
+                      </Button>
+                    </div>
+                  )}
+                </Card>
+                
+                {/* Available Documents by Category */}
+                {loadingPolicy ? (
+                  <Card><div className="text-center py-4 text-slate-500">Завантаження...</div></Card>
+                ) : (
+                  Object.entries(docsByCategory).map(([category, docs]) => (
+                    <Card key={category} title={CATEGORY_LABELS[category] || category}>
+                      <div className="grid grid-cols-2 gap-2">
+                        {docs.map(doc => (
+                          <button
+                            key={doc.doc_type}
+                            onClick={() => doc.available && openDocumentPreview(doc.doc_type)}
+                            disabled={!doc.available}
+                            data-testid={`doc-btn-${doc.doc_type}`}
+                            className={cn(
+                              "p-3 rounded-lg border text-left text-sm transition",
+                              doc.available 
+                                ? "border-slate-200 hover:bg-slate-50 hover:border-slate-300" 
+                                : "border-slate-100 bg-slate-50 opacity-50 cursor-not-allowed"
+                            )}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span>{doc.is_legal ? "⚖️" : "📄"}</span>
+                                <span className="font-medium">{doc.name}</span>
+                              </div>
+                              {doc.available && (
+                                <span className="text-xs text-blue-600">👁️ Перегляд</span>
+                              )}
+                            </div>
+                            {!doc.available && doc.reason && (
+                              <div className="text-xs text-rose-500 mt-1">{doc.reason}</div>
+                            )}
+                            {doc.warnings && doc.warnings.length > 0 && (
+                              <div className="text-xs text-amber-600 mt-1">{doc.warnings[0]}</div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </Card>
+                  ))
+                )}
+              </>
+            ) : (
+              <Card>
+                <div className="text-center text-slate-500 py-8">Виберіть ордер для генерації документів</div>
+              </Card>
+            )}
+          </div>
+          
+          {/* Right: Recent documents */}
+          <div className="lg:col-span-3">
+            <Card title="📜 Останні документи">
+              {documents.length > 0 ? (
+                <div className="space-y-2">
+                  {documents.map(doc => (
+                    <div key={doc.id} className="p-2 bg-slate-50 rounded-lg text-sm">
+                      <div className="font-medium">{doc.doc_type}</div>
+                      <div className="text-xs text-slate-500">v{doc.version} · {fmtDateShort(doc.created_at)}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-slate-500">Документів поки немає</div>
+              )}
+            </Card>
+          </div>
+        </div>
+      )}
+      
+      {/* Document Preview Modal */}
+      <DocumentPreviewModal
+        isOpen={previewModal.isOpen}
+        onClose={closePreviewModal}
+        docType={previewModal.docType}
+        orderId={previewModal.orderId}
+        payerProfileId={previewModal.payerProfileId}
+        agreementId={previewModal.agreementId}
+        annexId={previewModal.annexId}
+        onDocumentGenerated={(data) => console.log("Document generated:", data)}
+        onDocumentSigned={(data) => console.log("Document signed:", data)}
+      />
+      
+      {/* === AGREEMENTS SUB-TAB === */}
+      {activeSubTab === "agreements" && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Left: Create new agreement */}
+          <div className="lg:col-span-4">
+            <Card title="➕ Новий рамковий договір">
+              <div className="space-y-4">
+                <div className="text-sm text-slate-600">
+                  Рамковий договір діє 12 місяців. Всі додатки (Annexes) посилаються на нього.
                 </div>
                 
-                <div className="flex gap-2 mt-4">
-                  <Button variant="ghost" className="flex-1" onClick={() => setShowPayerModal(false)}>
-                    Скасувати
-                  </Button>
-                  <Button 
-                    className="flex-1"
-                    disabled={saving || !payerForm.company_name.trim()}
-                    onClick={handleSavePayerProfile}
+                {selectedPayerProfile ? (
+                  <div className="p-3 bg-slate-50 rounded-xl">
+                    <div className="text-sm font-semibold">{selectedPayerProfile.company_name || "Фіз. особа"}</div>
+                    <div className="text-xs text-slate-500">{PAYER_TYPE_LABELS[selectedPayerProfile.payer_type]}</div>
+                    {selectedPayerProfile.edrpou && <div className="text-xs text-slate-500">ЄДРПОУ: {selectedPayerProfile.edrpou}</div>}
+                    <Button variant="ghost" size="sm" className="mt-2" onClick={() => setSelectedPayerProfile(null)}>
+                      Змінити платника
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="text-xs text-slate-500">Виберіть платника:</div>
+                    <div className="grid grid-cols-1 gap-2 max-h-[300px] overflow-y-auto">
+                      {payerProfiles.map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => setSelectedPayerProfile(p)}
+                          className="text-left p-2 rounded-lg border border-slate-200 hover:bg-slate-50 text-sm"
+                        >
+                          <div className="font-medium truncate">{p.company_name}</div>
+                          <div className="text-xs text-slate-500">{PAYER_TYPE_LABELS[p.payer_type]}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                <Button 
+                  onClick={createMasterAgreement} 
+                  disabled={!selectedPayerProfile || creatingAgreement}
+                  className="w-full"
+                >
+                  {creatingAgreement ? "Створення..." : "📋 Створити договір"}
+                </Button>
+              </div>
+            </Card>
+          </div>
+          
+          {/* Right: Agreements list */}
+          <div className="lg:col-span-8">
+            <Card title="📋 Рамкові договори">
+              {masterAgreements.length > 0 ? (
+                <div className="space-y-3">
+                  {masterAgreements.map(a => {
+                    // Calculate expiration status
+                    const today = new Date();
+                    const validUntil = a.valid_until ? new Date(a.valid_until) : null;
+                    let expirationStatus = null;
+                    let daysUntilExpiry = null;
+                    
+                    if (validUntil && a.status === "signed") {
+                      daysUntilExpiry = Math.ceil((validUntil - today) / (1000 * 60 * 60 * 24));
+                      if (daysUntilExpiry < 0) {
+                        expirationStatus = "expired";
+                      } else if (daysUntilExpiry <= 30) {
+                        expirationStatus = "warning";
+                      } else {
+                        expirationStatus = "active";
+                      }
+                    }
+                    
+                    return (
+                    <div key={a.id} className="p-4 bg-slate-50 rounded-xl">
+                      {/* Expiration Banner */}
+                      {expirationStatus === "expired" && (
+                        <div className="mb-3 p-3 bg-rose-100 border border-rose-200 rounded-lg">
+                          <div className="flex items-center gap-2 text-rose-700">
+                            <span className="text-lg">🔴</span>
+                            <div>
+                              <div className="font-semibold">Договір закінчився</div>
+                              <div className="text-sm">Створення додатків заблоковано. Оновіть або створіть новий договір.</div>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => {/* TODO: Open create agreement modal */}}
+                            className="mt-2 px-4 py-1.5 bg-rose-600 text-white text-sm rounded-lg hover:bg-rose-700"
+                          >
+                            ➕ Створити новий договір
+                          </button>
+                        </div>
+                      )}
+                      
+                      {expirationStatus === "warning" && (
+                        <div className="mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                          <div className="flex items-center gap-2 text-amber-700">
+                            <span className="text-lg">⚠️</span>
+                            <div>
+                              <div className="font-semibold">Договір закінчується через {daysUntilExpiry} {daysUntilExpiry === 1 ? 'день' : daysUntilExpiry < 5 ? 'дні' : 'днів'}</div>
+                              <div className="text-sm">Рекомендуємо завчасно продовжити договір.</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-lg">{a.contract_number}</span>
+                            {/* Expiration Badge */}
+                            {expirationStatus === "active" && (
+                              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs rounded-full">✅ активний</span>
+                            )}
+                            {expirationStatus === "warning" && (
+                              <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full">⚠️ {daysUntilExpiry} дн.</span>
+                            )}
+                            {expirationStatus === "expired" && (
+                              <span className="px-2 py-0.5 bg-rose-100 text-rose-700 text-xs rounded-full">🔴 закінчився</span>
+                            )}
+                          </div>
+                          <div className="text-sm text-slate-600">{a.payer?.company_name || "—"}</div>
+                          <div className="text-xs text-slate-500">
+                            {PAYER_TYPE_LABELS[a.payer?.payer_type] || "—"}
+                          </div>
+                        </div>
+                        <span className={cn(
+                          "px-2 py-1 rounded-full text-xs font-medium",
+                          STATUS_LABELS[a.status]?.color || "bg-slate-100"
+                        )}>
+                          {STATUS_LABELS[a.status]?.label || a.status}
+                        </span>
+                      </div>
+                      
+                      <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <span className="text-slate-500">Дійсний з:</span>{" "}
+                          {a.valid_from ? fmtDateShort(a.valid_from) : "—"}
+                        </div>
+                        <div>
+                          <span className="text-slate-500">До:</span>{" "}
+                          {a.valid_until ? fmtDateShort(a.valid_until) : "—"}
+                        </div>
+                        <div>
+                          <span className="text-slate-500">Підписано:</span>{" "}
+                          {a.signed_at ? fmtDateShort(a.signed_at) : "—"}
+                        </div>
+                      </div>
+                      
+                      {a.status === "draft" && (
+                        <div className="mt-3 flex gap-2">
+                          <Button size="sm" variant="ghost" onClick={() => signAgreement(a.id)}>
+                            ✅ Позначити підписаним
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )})}
+                </div>
+              ) : (
+                <div className="text-center text-slate-500 py-8">
+                  Договорів поки немає. Створіть перший рамковий договір.
+                </div>
+              )}
+            </Card>
+          </div>
+        </div>
+      )}
+      
+      {/* === ANNEXES SUB-TAB === */}
+      {activeSubTab === "annexes" && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          {/* Left: Order selection */}
+          <div className="lg:col-span-3">
+            <Card title="📋 Виберіть ордер">
+              <div className="space-y-2 max-h-[500px] overflow-y-auto">
+                {orders.slice(0, 50).map(o => (
+                  <button
+                    key={o.order_id}
+                    onClick={() => setSelectedOrderId(o.order_id)}
+                    className={cn(
+                      "w-full rounded-lg border px-3 py-2 text-left transition text-sm",
+                      o.order_id === selectedOrderId 
+                        ? "border-slate-900 bg-slate-50" 
+                        : "border-slate-200 hover:bg-slate-50"
+                    )}
                   >
-                    {saving ? "..." : "Зберегти"}
+                    <div className="font-medium">#{o.order_number}</div>
+                    <div className="text-xs text-slate-500">{o.customer_name}</div>
+                    <div className="text-xs text-slate-400">{o.status}</div>
+                  </button>
+                ))}
+              </div>
+            </Card>
+          </div>
+          
+          {/* Center: Generate annex */}
+          <div className="lg:col-span-5">
+            <Card title="📎 Додатки до договору">
+              {selectedOrder ? (
+                <div className="space-y-4">
+                  <div className="text-sm">
+                    Ордер: <span className="font-semibold">#{selectedOrder.order_number}</span> · {selectedOrder.customer_name}
+                  </div>
+                  
+                  <div className="p-4 bg-blue-50 rounded-xl text-sm text-blue-800">
+                    <strong>Додаток (Annex)</strong> — юридичний документ, що описує конкретну оренду. 
+                    Після генерації стає immutable (snapshot даних).
+                  </div>
+                  
+                  <Button 
+                    onClick={generateAnnex} 
+                    disabled={generatingAnnex}
+                    className="w-full"
+                  >
+                    {generatingAnnex ? "Генерація..." : "📎 Згенерувати Додаток"}
                   </Button>
                 </div>
-              </div>
-            </div>
+              ) : (
+                <div className="text-center text-slate-500 py-8">
+                  Виберіть ордер для створення додатку
+                </div>
+              )}
+            </Card>
+          </div>
+          
+          {/* Right: Annexes list */}
+          <div className="lg:col-span-4">
+            <Card title="📜 Історія додатків">
+              {orderAnnexes.length > 0 ? (
+                <div className="space-y-2">
+                  {orderAnnexes.map(annex => (
+                    <div key={annex.id} className="p-3 bg-slate-50 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div className="font-medium">{annex.annex_number}</div>
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-full text-xs",
+                          STATUS_LABELS[annex.status]?.color || "bg-slate-100"
+                        )}>
+                          {STATUS_LABELS[annex.status]?.label || annex.status}
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-500 mt-1">
+                        v{annex.version} · {fmtDateShort(annex.created_at)}
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        Договір: {annex.contract_number || "—"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-slate-500">
+                  {selectedOrderId ? "Додатків для цього ордера немає" : "Виберіть ордер"}
+                </div>
+              )}
+            </Card>
           </div>
         </div>
       )}
     </div>
   );
 }
+
+
+// ============================================================
+// TAB: CASH
+// ============================================================
+function CashTab({ payoutsStats, depositsByCurrency, handleAddExpense, saving, refreshAll }) {
+  const [showExpenseForm, setShowExpenseForm] = useState(false);
+  const [expenseCategory, setExpenseCategory] = useState("rent_cash");
+  const [expenseAmount, setExpenseAmount] = useState("");
+  const [expenseDesc, setExpenseDesc] = useState("");
+  const [operationType, setOperationType] = useState("expense");
+  
+  const onAddExpense = async () => {
+    const success = await handleAddExpense(expenseCategory, expenseAmount, expenseDesc, operationType);
+    if (success) {
+      setExpenseAmount("");
+      setExpenseDesc("");
+      setShowExpenseForm(false);
+    }
+  };
+  
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Cash Balance */}
+      <Card title="💵 Готівка">
+        <div className="space-y-4">
+          <div>
+            <div className="text-xs text-slate-500 mb-1">Оренда</div>
+            <div className="text-2xl font-bold text-emerald-600">{money(payoutsStats?.rent_cash_balance || 0)}</div>
+            {payoutsStats?.rent_cash_expenses > 0 && (
+              <div className="text-xs text-rose-600">Витрачено: -{money(payoutsStats.rent_cash_expenses)}</div>
+            )}
+          </div>
+          
+          <div>
+            <div className="text-xs text-slate-500 mb-1">Шкода</div>
+            <div className="text-2xl font-bold text-amber-600">{money(payoutsStats?.damage_cash_balance || 0)}</div>
+            {payoutsStats?.damage_cash_expenses > 0 && (
+              <div className="text-xs text-rose-600">Витрачено: -{money(payoutsStats.damage_cash_expenses)}</div>
+            )}
+          </div>
+          
+          <div className="pt-3 border-t border-slate-200">
+            <div className="text-xs text-slate-500 mb-1">Всього готівки</div>
+            <div className="text-3xl font-bold">{money(payoutsStats?.total_cash_balance || 0)}</div>
+          </div>
+        </div>
+      </Card>
+      
+      {/* Bank Balance */}
+      <Card title="🏦 Безготівка">
+        <div className="space-y-4">
+          <div>
+            <div className="text-xs text-slate-500 mb-1">Оренда</div>
+            <div className="text-2xl font-bold text-blue-600">{money(payoutsStats?.rent_bank_balance || 0)}</div>
+          </div>
+          
+          <div>
+            <div className="text-xs text-slate-500 mb-1">Шкода</div>
+            <div className="text-2xl font-bold text-blue-500">{money(payoutsStats?.damage_bank_balance || 0)}</div>
+          </div>
+          
+          <div className="pt-3 border-t border-slate-200">
+            <div className="text-xs text-slate-500 mb-1">Всього безготівки</div>
+            <div className="text-3xl font-bold text-blue-600">{money(payoutsStats?.bank_balance || 0)}</div>
+          </div>
+        </div>
+      </Card>
+      
+      {/* Deposits */}
+      <Card title="🔒 Застави (холд)">
+        <div className="space-y-3">
+          <div className="flex justify-between items-center">
+            <span className="text-slate-600">₴ UAH</span>
+            <span className="text-xl font-bold">{depositsByCurrency.UAH.toLocaleString()}</span>
+          </div>
+          {depositsByCurrency.USD > 0 && (
+            <div className="flex justify-between items-center">
+              <span className="text-slate-600">$ USD</span>
+              <span className="text-xl font-bold">{depositsByCurrency.USD.toFixed(0)}</span>
+            </div>
+          )}
+          {depositsByCurrency.EUR > 0 && (
+            <div className="flex justify-between items-center">
+              <span className="text-slate-600">€ EUR</span>
+              <span className="text-xl font-bold">{depositsByCurrency.EUR.toFixed(0)}</span>
+            </div>
+          )}
+        </div>
+      </Card>
+      
+      {/* Add expense/deposit */}
+      <Card title="➕ Додати операцію" className="lg:col-span-3">
+        {!showExpenseForm ? (
+          <div className="flex gap-3">
+            <Button onClick={() => { setOperationType("expense"); setShowExpenseForm(true); }}>
+              📉 Витрата
+            </Button>
+            <Button variant="success" onClick={() => { setOperationType("deposit"); setShowExpenseForm(true); }}>
+              📥 Внесення
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <div>
+              <div className="text-xs text-slate-500 mb-1">Категорія</div>
+              <Select
+                value={expenseCategory}
+                onChange={setExpenseCategory}
+                options={[
+                  { value: "rent_cash", label: "Оренда (готівка)" },
+                  { value: "damage_cash", label: "Шкода (готівка)" },
+                  { value: "rent_bank", label: "Оренда (банк)" },
+                  { value: "damage_bank", label: "Шкода (банк)" },
+                ]}
+              />
+            </div>
+            <div>
+              <div className="text-xs text-slate-500 mb-1">Сума</div>
+              <Input
+                type="number"
+                placeholder="0"
+                value={expenseAmount}
+                onChange={(e) => setExpenseAmount(e.target.value)}
+              />
+            </div>
+            <div>
+              <div className="text-xs text-slate-500 mb-1">Опис</div>
+              <Input
+                placeholder="Опис операції"
+                value={expenseDesc}
+                onChange={(e) => setExpenseDesc(e.target.value)}
+              />
+            </div>
+            <div className="flex items-end gap-2">
+              <Button
+                variant={operationType === "expense" ? "danger" : "success"}
+                disabled={!expenseAmount || !expenseDesc || saving}
+                onClick={onAddExpense}
+              >
+                {saving ? "..." : operationType === "expense" ? "Витрата" : "Внесення"}
+              </Button>
+              <Button variant="ghost" onClick={() => setShowExpenseForm(false)}>✕</Button>
+            </div>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+
+// ============================================================
+// TAB: FORECAST
+// ============================================================
+function ForecastTab({ orders }) {
+  const forecast = useMemo(() => {
+    const upcoming = orders
+      .filter(o => o.status !== "completed" && o.status !== "cancelled")
+      .map(o => ({
+        ...o,
+        rentDue: Math.max(0, (o.total_rental || 0) - (o.rent_paid || 0)),
+        depositExpected: Math.max(0, (o.total_deposit || 0) - (o.deposit_held || 0))
+      }))
+      .filter(o => o.rentDue > 0 || o.depositExpected > 0)
+      .sort((a, b) => new Date(a.rental_start_date) - new Date(b.rental_start_date));
+    
+    const totalRentExpected = upcoming.reduce((s, o) => s + o.rentDue, 0);
+    const totalDepositExpected = upcoming.reduce((s, o) => s + o.depositExpected, 0);
+    
+    return { upcoming, totalRentExpected, totalDepositExpected };
+  }, [orders]);
+  
+  return (
+    <div className="space-y-4">
+      {/* Summary */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card>
+          <div className="text-center">
+            <div className="text-xs text-slate-500">Очікується оренди</div>
+            <div className="text-2xl font-bold text-emerald-600">{money(forecast.totalRentExpected)}</div>
+          </div>
+        </Card>
+        <Card>
+          <div className="text-center">
+            <div className="text-xs text-slate-500">Очікується застав</div>
+            <div className="text-2xl font-bold text-blue-600">{money(forecast.totalDepositExpected)}</div>
+          </div>
+        </Card>
+        <Card>
+          <div className="text-center">
+            <div className="text-xs text-slate-500">Всього очікується</div>
+            <div className="text-2xl font-bold">{money(forecast.totalRentExpected + forecast.totalDepositExpected)}</div>
+          </div>
+        </Card>
+      </div>
+      
+      {/* Upcoming orders */}
+      <Card title="📅 Очікувані надходження">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200">
+                <th className="text-left py-2 px-2">Ордер</th>
+                <th className="text-left py-2 px-2">Клієнт</th>
+                <th className="text-left py-2 px-2">Дата</th>
+                <th className="text-right py-2 px-2">Оренда</th>
+                <th className="text-right py-2 px-2">Застава</th>
+                <th className="text-right py-2 px-2">Всього</th>
+              </tr>
+            </thead>
+            <tbody>
+              {forecast.upcoming.map(o => (
+                <tr key={o.order_id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="py-2 px-2 font-medium">#{o.order_number}</td>
+                  <td className="py-2 px-2">{o.customer_name}</td>
+                  <td className="py-2 px-2">{fmtDateShort(o.rental_start_date)}</td>
+                  <td className="py-2 px-2 text-right text-emerald-600 font-medium">{o.rentDue > 0 ? money(o.rentDue) : "—"}</td>
+                  <td className="py-2 px-2 text-right text-blue-600 font-medium">{o.depositExpected > 0 ? money(o.depositExpected) : "—"}</td>
+                  <td className="py-2 px-2 text-right font-bold">{money(o.rentDue + o.depositExpected)}</td>
+                </tr>
+              ))}
+              {forecast.upcoming.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-500">Немає очікуваних надходжень</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+
+// ============================================================
+// TAB: EXPENSES
+// ============================================================
+function ExpensesTab({ allExpenses, handleAddExpense, saving, refreshAll }) {
+  const [showForm, setShowForm] = useState(false);
+  const [category, setCategory] = useState("rent_cash");
+  const [amount, setAmount] = useState("");
+  const [desc, setDesc] = useState("");
+  
+  const expensesByCategory = useMemo(() => {
+    const groups = {};
+    allExpenses.forEach(e => {
+      const cat = e.category || "OTHER";
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(e);
+    });
+    return groups;
+  }, [allExpenses]);
+  
+  const categoryLabels = {
+    RENT_CASH_EXPENSE: "Витрати готівка (оренда)",
+    DAMAGE_EXPENSE: "Витрати готівка (шкода)",
+    RENT_BANK_EXPENSE: "Витрати банк (оренда)",
+    DAMAGE_BANK_EXPENSE: "Витрати банк (шкода)",
+    RENT_CASH_DEPOSIT: "Внесення готівка (оренда)",
+    DAMAGE_CASH_DEPOSIT: "Внесення готівка (шкода)",
+    OTHER: "Інше"
+  };
+  
+  return (
+    <div className="space-y-4">
+      {/* Add expense button */}
+      <div className="flex justify-end">
+        <Button onClick={() => setShowForm(true)}>➕ Додати витрату</Button>
+      </div>
+      
+      {/* Add form */}
+      {showForm && (
+        <Card title="Нова витрата">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <Select
+              value={category}
+              onChange={setCategory}
+              options={[
+                { value: "rent_cash", label: "Оренда (готівка)" },
+                { value: "damage_cash", label: "Шкода (готівка)" },
+                { value: "rent_bank", label: "Оренда (банк)" },
+                { value: "damage_bank", label: "Шкода (банк)" },
+              ]}
+            />
+            <Input type="number" placeholder="Сума" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <Input placeholder="Опис" value={desc} onChange={(e) => setDesc(e.target.value)} />
+            <div className="flex gap-2">
+              <Button
+                disabled={!amount || !desc || saving}
+                onClick={async () => {
+                  const success = await handleAddExpense(category, amount, desc, "expense");
+                  if (success) {
+                    setAmount("");
+                    setDesc("");
+                    setShowForm(false);
+                  }
+                }}
+              >
+                {saving ? "..." : "Додати"}
+              </Button>
+              <Button variant="ghost" onClick={() => setShowForm(false)}>✕</Button>
+            </div>
+          </div>
+        </Card>
+      )}
+      
+      {/* Expenses list */}
+      <Card title="📉 Історія витрат">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200">
+                <th className="text-left py-2 px-2">Дата</th>
+                <th className="text-left py-2 px-2">Категорія</th>
+                <th className="text-left py-2 px-2">Опис</th>
+                <th className="text-right py-2 px-2">Сума</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allExpenses.slice(0, 50).map(e => (
+                <tr key={e.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="py-2 px-2">{fmtDateShort(e.created_at)}</td>
+                  <td className="py-2 px-2">
+                    <Badge kind={e.expense_type === "income" ? "ok" : "warn"}>
+                      {categoryLabels[e.category] || e.category}
+                    </Badge>
+                  </td>
+                  <td className="py-2 px-2">{e.description}</td>
+                  <td className={cn("py-2 px-2 text-right font-medium", e.expense_type === "income" ? "text-emerald-600" : "text-rose-600")}>
+                    {e.expense_type === "income" ? "+" : "-"}{money(e.amount)}
+                  </td>
+                </tr>
+              ))}
+              {allExpenses.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="py-8 text-center text-slate-500">Немає витрат</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+
+// ============================================================
+// TAB: DEPOSITS
+// ============================================================
+function DepositsTab({ deposits, depositsByCurrency }) {
+  const activeDeposits = useMemo(() => {
+    return deposits
+      .filter(d => d.status === "holding" || d.status === "partially_used")
+      .sort((a, b) => new Date(b.opened_at) - new Date(a.opened_at));
+  }, [deposits]);
+  
+  const closedDeposits = useMemo(() => {
+    return deposits
+      .filter(d => d.status === "refunded" || d.status === "fully_used")
+      .sort((a, b) => new Date(b.closed_at) - new Date(a.closed_at));
+  }, [deposits]);
+  
+  return (
+    <div className="space-y-4">
+      {/* Summary */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card>
+          <div className="text-center">
+            <div className="text-xs text-slate-500">₴ UAH</div>
+            <div className="text-2xl font-bold">{depositsByCurrency.UAH.toLocaleString()}</div>
+          </div>
+        </Card>
+        <Card>
+          <div className="text-center">
+            <div className="text-xs text-slate-500">$ USD</div>
+            <div className="text-2xl font-bold">{depositsByCurrency.USD.toFixed(0)}</div>
+          </div>
+        </Card>
+        <Card>
+          <div className="text-center">
+            <div className="text-xs text-slate-500">€ EUR</div>
+            <div className="text-2xl font-bold">{depositsByCurrency.EUR.toFixed(0)}</div>
+          </div>
+        </Card>
+      </div>
+      
+      {/* Active deposits */}
+      <Card title="🔒 Активні застави" right={<Badge kind="pending">{activeDeposits.length}</Badge>}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200">
+                <th className="text-left py-2 px-2">Ордер</th>
+                <th className="text-left py-2 px-2">Клієнт</th>
+                <th className="text-right py-2 px-2">Прийнято</th>
+                <th className="text-right py-2 px-2">Використано</th>
+                <th className="text-right py-2 px-2">Доступно</th>
+                <th className="text-left py-2 px-2">Статус</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeDeposits.map(d => (
+                <tr key={d.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="py-2 px-2 font-medium">#{d.order_number}</td>
+                  <td className="py-2 px-2">{d.customer_name}</td>
+                  <td className="py-2 px-2 text-right">{d.display_amount}</td>
+                  <td className="py-2 px-2 text-right text-rose-600">{d.used_amount > 0 ? money(d.used_amount) : "—"}</td>
+                  <td className="py-2 px-2 text-right font-bold text-emerald-600">{money(d.available)}</td>
+                  <td className="py-2 px-2"><Badge kind="pending">{d.status}</Badge></td>
+                </tr>
+              ))}
+              {activeDeposits.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-500">Немає активних застав</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+      
+      {/* Closed deposits */}
+      <Card title="📜 Закриті застави" right={<Badge kind="ok">{closedDeposits.length}</Badge>}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200">
+                <th className="text-left py-2 px-2">Ордер</th>
+                <th className="text-left py-2 px-2">Клієнт</th>
+                <th className="text-right py-2 px-2">Було</th>
+                <th className="text-right py-2 px-2">Використано</th>
+                <th className="text-right py-2 px-2">Повернуто</th>
+                <th className="text-left py-2 px-2">Статус</th>
+              </tr>
+            </thead>
+            <tbody>
+              {closedDeposits.slice(0, 20).map(d => (
+                <tr key={d.id} className="border-b border-slate-100 hover:bg-slate-50">
+                  <td className="py-2 px-2 font-medium">#{d.order_number}</td>
+                  <td className="py-2 px-2">{d.customer_name}</td>
+                  <td className="py-2 px-2 text-right">{d.display_amount}</td>
+                  <td className="py-2 px-2 text-right text-rose-600">{d.used_amount > 0 ? money(d.used_amount) : "—"}</td>
+                  <td className="py-2 px-2 text-right text-blue-600">{d.refunded_amount > 0 ? money(d.refunded_amount) : "—"}</td>
+                  <td className="py-2 px-2"><Badge kind="ok">{d.status}</Badge></td>
+                </tr>
+              ))}
+              {closedDeposits.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-slate-500">Немає закритих застав</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+
+// ============================================================
+// TAB: ANALYTICS
+// ============================================================
+function AnalyticsTab({ orders, payoutsStats, deposits, orderStats }) {
+  const analytics = useMemo(() => {
+    const totalRevenue = (payoutsStats?.total_cash_balance || 0) + (payoutsStats?.bank_balance || 0);
+    const totalDeposits = deposits.reduce((s, d) => s + (d.held_amount || 0), 0);
+    const avgOrderValue = orders.length > 0 ? orders.reduce((s, o) => s + (o.total_rental || 0), 0) / orders.length : 0;
+    const paidRate = orderStats.total > 0 ? (orderStats.paid / orderStats.total * 100).toFixed(1) : 0;
+    
+    return { totalRevenue, totalDeposits, avgOrderValue, paidRate };
+  }, [orders, payoutsStats, deposits, orderStats]);
+  
+  return (
+    <div className="space-y-4">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <div className="text-center">
+            <div className="text-xs text-slate-500">Загальний дохід</div>
+            <div className="text-2xl font-bold text-emerald-600">{money(analytics.totalRevenue)}</div>
+          </div>
+        </Card>
+        <Card>
+          <div className="text-center">
+            <div className="text-xs text-slate-500">Застави в холді</div>
+            <div className="text-2xl font-bold text-blue-600">{money(analytics.totalDeposits)}</div>
+          </div>
+        </Card>
+        <Card>
+          <div className="text-center">
+            <div className="text-xs text-slate-500">Середній чек</div>
+            <div className="text-2xl font-bold">{money(analytics.avgOrderValue)}</div>
+          </div>
+        </Card>
+        <Card>
+          <div className="text-center">
+            <div className="text-xs text-slate-500">% оплачених</div>
+            <div className="text-2xl font-bold text-violet-600">{analytics.paidRate}%</div>
+          </div>
+        </Card>
+      </div>
+      
+      {/* Revenue breakdown */}
+      <Card title="💰 Розбивка доходу">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <div className="text-sm font-medium text-slate-600 mb-3">Готівка</div>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>Оренда</span>
+                <span className="font-semibold text-emerald-600">{money(payoutsStats?.rent_cash_balance || 0)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span>Шкода</span>
+                <span className="font-semibold text-amber-600">{money(payoutsStats?.damage_cash_balance || 0)}</span>
+              </div>
+              <div className="flex justify-between text-sm pt-2 border-t border-slate-200">
+                <span className="font-medium">Всього</span>
+                <span className="font-bold">{money(payoutsStats?.total_cash_balance || 0)}</span>
+              </div>
+            </div>
+          </div>
+          
+          <div>
+            <div className="text-sm font-medium text-slate-600 mb-3">Безготівка</div>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>Оренда</span>
+                <span className="font-semibold text-blue-600">{money(payoutsStats?.rent_bank_balance || 0)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span>Шкода</span>
+                <span className="font-semibold text-blue-500">{money(payoutsStats?.damage_bank_balance || 0)}</span>
+              </div>
+              <div className="flex justify-between text-sm pt-2 border-t border-slate-200">
+                <span className="font-medium">Всього</span>
+                <span className="font-bold">{money(payoutsStats?.bank_balance || 0)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Card>
+      
+      {/* Order stats */}
+      <Card title="📊 Статистика ордерів">
+        <div className="grid grid-cols-3 gap-4 text-center">
+          <div>
+            <div className="text-3xl font-bold">{orderStats.total}</div>
+            <div className="text-sm text-slate-500">Всього ордерів</div>
+          </div>
+          <div>
+            <div className="text-3xl font-bold text-emerald-600">{orderStats.paid}</div>
+            <div className="text-sm text-slate-500">Оплачено</div>
+          </div>
+          <div>
+            <div className="text-3xl font-bold text-amber-600">{orderStats.withDebt}</div>
+            <div className="text-sm text-slate-500">З боргом</div>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+
+// ============================================================
+// TAB: REGISTRY (read-only архів документів)
+// ============================================================
+function RegistryTab({ orders, documents, payerProfiles }) {
+  const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState("all");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [masterAgreements, setMasterAgreements] = useState([]);
+  const [annexes, setAnnexes] = useState([]);
+  
+  // Load all agreements and annexes on mount
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const [agRes, anRes] = await Promise.all([
+          authFetch(`${BACKEND_URL}/api/agreements`),
+          authFetch(`${BACKEND_URL}/api/annexes`)
+        ]);
+        const agData = await agRes.json();
+        const anData = await anRes.json();
+        setMasterAgreements(agData.agreements || []);
+        setAnnexes(anData.annexes || []);
+      } catch (e) {
+        console.error("Registry load error:", e);
+      }
+    };
+    loadData();
+  }, []);
+  
+  const DOC_TYPES = [
+    { value: "all", label: "Всі типи" },
+    { value: "master_agreement", label: "Рамкові договори" },
+    { value: "annex", label: "Додатки" },
+    { value: "invoice", label: "Рахунки" },
+    { value: "act", label: "Акти" }
+  ];
+  
+  const STATUSES = [
+    { value: "all", label: "Всі статуси" },
+    { value: "draft", label: "Чернетка" },
+    { value: "signed", label: "Підписано" },
+    { value: "expired", label: "Закінчився" }
+  ];
+  
+  // Combine all documents
+  const allDocuments = useMemo(() => {
+    const docs = [];
+    
+    // Master agreements
+    masterAgreements.forEach(ma => {
+      docs.push({
+        id: `ma-${ma.id}`,
+        type: "master_agreement",
+        number: ma.contract_number,
+        date: ma.created_at,
+        status: ma.status,
+        payer: ma.payer?.company_name || "—",
+        payerId: ma.payer_profile_id,
+        orderId: null,
+        validUntil: ma.valid_until
+      });
+    });
+    
+    // Annexes
+    annexes.forEach(an => {
+      docs.push({
+        id: `an-${an.id}`,
+        type: "annex",
+        number: an.annex_number,
+        date: an.created_at,
+        status: an.status,
+        payer: "—",
+        payerId: an.payer_profile_id,
+        orderId: an.order_id,
+        validUntil: null
+      });
+    });
+    
+    return docs.sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [masterAgreements, annexes]);
+  
+  // Filtered documents
+  const filtered = useMemo(() => {
+    return allDocuments.filter(doc => {
+      // Type filter
+      if (filterType !== "all" && doc.type !== filterType) return false;
+      // Status filter
+      if (filterStatus !== "all" && doc.status !== filterStatus) return false;
+      // Search
+      if (search) {
+        const s = search.toLowerCase();
+        if (!doc.number?.toLowerCase().includes(s) && 
+            !doc.payer?.toLowerCase().includes(s)) return false;
+      }
+      return true;
+    });
+  }, [allDocuments, filterType, filterStatus, search]);
+  
+  const getStatusBadge = (status) => {
+    const styles = {
+      draft: "bg-slate-100 text-slate-600",
+      signed: "bg-emerald-100 text-emerald-700",
+      expired: "bg-rose-100 text-rose-600",
+      sent: "bg-blue-100 text-blue-700"
+    };
+    const labels = {
+      draft: "Чернетка",
+      signed: "Підписано",
+      expired: "Закінчився",
+      sent: "Відправлено"
+    };
+    return (
+      <span className={cn("text-xs px-2 py-0.5 rounded-full", styles[status] || "bg-slate-100")}>
+        {labels[status] || status}
+      </span>
+    );
+  };
+  
+  const getTypeBadge = (type) => {
+    const styles = {
+      master_agreement: "bg-purple-100 text-purple-700",
+      annex: "bg-blue-100 text-blue-700",
+      invoice: "bg-amber-100 text-amber-700",
+      act: "bg-slate-100 text-slate-600"
+    };
+    const labels = {
+      master_agreement: "📋 Рамковий",
+      annex: "📎 Додаток",
+      invoice: "📄 Рахунок",
+      act: "📝 Акт"
+    };
+    return (
+      <span className={cn("text-xs px-2 py-0.5 rounded-full", styles[type] || "bg-slate-100")}>
+        {labels[type] || type}
+      </span>
+    );
+  };
+  
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <Card>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex-1">
+            <Input
+              type="search"
+              placeholder="🔍 Пошук: номер, платник..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <select
+            className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm"
+            value={filterType}
+            onChange={(e) => setFilterType(e.target.value)}
+          >
+            {DOC_TYPES.map(t => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+          <select
+            className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm"
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+          >
+            {STATUSES.map(s => (
+              <option key={s.value} value={s.value}>{s.label}</option>
+            ))}
+          </select>
+        </div>
+      </Card>
+      
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-3">
+        <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
+          <div className="text-2xl font-bold text-slate-900">{allDocuments.length}</div>
+          <div className="text-xs text-slate-500">Всього</div>
+        </div>
+        <div className="bg-purple-50 rounded-xl border border-purple-200 p-4 text-center">
+          <div className="text-2xl font-bold text-purple-700">
+            {masterAgreements.length}
+          </div>
+          <div className="text-xs text-purple-600">Рамкових</div>
+        </div>
+        <div className="bg-blue-50 rounded-xl border border-blue-200 p-4 text-center">
+          <div className="text-2xl font-bold text-blue-700">
+            {annexes.length}
+          </div>
+          <div className="text-xs text-blue-600">Додатків</div>
+        </div>
+        <div className="bg-emerald-50 rounded-xl border border-emerald-200 p-4 text-center">
+          <div className="text-2xl font-bold text-emerald-700">
+            {allDocuments.filter(d => d.status === "signed").length}
+          </div>
+          <div className="text-xs text-emerald-600">Підписано</div>
+        </div>
+      </div>
+      
+      {/* Documents List */}
+      <Card title={`📄 Документи (${filtered.length})`}>
+        {filtered.length === 0 ? (
+          <div className="text-center py-8 text-slate-400">
+            <div className="text-4xl mb-2">📄</div>
+            <p>Документів не знайдено</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-100 -mx-4">
+            {filtered.slice(0, 100).map(doc => (
+              <div
+                key={doc.id}
+                className="px-4 py-3 hover:bg-slate-50 flex items-center gap-3"
+              >
+                {/* Type */}
+                <div className="flex-shrink-0">
+                  {getTypeBadge(doc.type)}
+                </div>
+                
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-slate-900">{doc.number}</div>
+                  <div className="text-xs text-slate-500">
+                    {doc.payer}
+                    {doc.orderId && <> · Ордер #{doc.orderId}</>}
+                  </div>
+                </div>
+                
+                {/* Date */}
+                <div className="text-xs text-slate-500 text-right flex-shrink-0">
+                  {new Date(doc.date).toLocaleDateString('uk-UA')}
+                  {doc.validUntil && (
+                    <div className="text-[10px]">до {new Date(doc.validUntil).toLocaleDateString('uk-UA')}</div>
+                  )}
+                </div>
+                
+                {/* Status */}
+                <div className="flex-shrink-0">
+                  {getStatusBadge(doc.status)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+      
+      {/* Info banner */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+        <strong>ℹ️ Це архів документів.</strong> Для генерації нових документів використовуйте вкладку "Операції" (для документів замовлення) або "Клієнти" (для рамкових договорів).
+      </div>
+    </div>
+  );
+}
+

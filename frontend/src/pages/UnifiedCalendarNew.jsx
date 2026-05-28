@@ -530,7 +530,7 @@ export default function UnifiedCalendar() {
 
   return (
     <div className="min-h-screen bg-corp-bg-page" data-testid="unified-calendar">
-      <CorporateHeader cabinetName="Календар подій" showBackButton onBackClick={() => nav('/manager')} />
+      <CorporateHeader cabinetName="Календар подій" showBackButton />
 
       <div className="mx-auto max-w-7xl px-3 sm:px-6 py-4">
         {/* View switcher */}

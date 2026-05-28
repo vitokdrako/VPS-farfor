@@ -927,7 +927,7 @@ export default function ReauditCabinetFull({ onBackToDashboard, onNavigateToTask
 
   return (
     <div className="min-h-screen bg-corp-bg-page" data-testid="reaudit-cabinet">
-      <CorporateHeader cabinetName="Кабінет переобліку" />
+      <CorporateHeader cabinetName="Кабінет переобліку" showBackButton />
       <div className="max-w-screen-2xl mx-auto px-3 lg:px-6 py-4 space-y-4">
         {/* KPI strip */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white rounded-xl border border-corp-border p-3 lg:p-4">

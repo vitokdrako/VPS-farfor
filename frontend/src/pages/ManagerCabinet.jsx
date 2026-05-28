@@ -242,7 +242,7 @@ export default function ManagerCabinet() {
 
   return (
     <div className="min-h-screen bg-corp-bg-page font-montserrat">
-      <CorporateHeader cabinetName="Менеджерська" />
+      <CorporateHeader cabinetName="Менеджерська" showBackButton />
       
       {/* Tabs */}
       <div className="max-w-[1600px] mx-auto px-4 pt-4">

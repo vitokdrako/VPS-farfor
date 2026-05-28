@@ -421,12 +421,12 @@ export default function ManagerDashboard() {
       
       {/* Quick Actions Bar */}
       <div className="bg-white border-b border-corp-border">
-        <div className="mx-auto max-w-7xl px-6 py-3">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="mx-auto max-w-7xl px-2 sm:px-6 py-2 sm:py-3">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             
             {/* ✅ Кнопка режиму об'єднання */}
             <button 
-              className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors flex items-center gap-2 ${
+              className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg border text-xs sm:text-sm font-medium transition-colors flex items-center gap-1 sm:gap-2 ${
                 mergeMode 
                   ? 'border-amber-400 bg-amber-50 text-amber-700 hover:bg-amber-100' 
                   : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
@@ -436,14 +436,14 @@ export default function ManagerDashboard() {
                 setSelectedForMerge([]);
               }}
             >
-              🔗 {mergeMode ? 'Скасувати' : 'Об\'єднати'}
+              🔗 <span className="hidden xs:inline">{mergeMode ? 'Скасувати' : 'Об\'єднати'}</span>
             </button>
 
             {/* ✅ Перемикач "Всі / День" з гортанням по днях */}
-            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1" data-testid="day-filter">
+            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5 sm:p-1" data-testid="day-filter">
               <button
                 onClick={() => setDayOffset(null)}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                className={`px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
                   dayOffset === null ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                 }`}
                 data-testid="filter-all-btn"
@@ -456,7 +456,7 @@ export default function ManagerDashboard() {
                 <button
                   onClick={() => setDayOffset(o => (o === null ? 0 : o - 1))}
                   title="Назад на день"
-                  className={`px-2 py-1.5 rounded-l-md text-sm font-bold transition-colors ${
+                  className={`px-1.5 sm:px-2 py-1 sm:py-1.5 rounded-l-md text-xs sm:text-sm font-bold transition-colors ${
                     dayOffset !== null ? 'hover:bg-white/15' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200'
                   }`}
                   data-testid="filter-prev-day"
@@ -465,7 +465,7 @@ export default function ManagerDashboard() {
                 </button>
                 <button
                   onClick={() => setDayOffset(0)}
-                  className={`px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors ${
+                  className={`px-2 sm:px-3 py-1 sm:py-1.5 text-xs sm:text-sm font-medium whitespace-nowrap transition-colors ${
                     dayOffset === null ? 'text-slate-500 hover:text-slate-700 hover:bg-slate-200 rounded-md' : ''
                   }`}
                   data-testid="filter-day-label"
@@ -483,7 +483,7 @@ export default function ManagerDashboard() {
                 <button
                   onClick={() => setDayOffset(o => (o === null ? 0 : o + 1))}
                   title="Вперед на день"
-                  className={`px-2 py-1.5 rounded-r-md text-sm font-bold transition-colors ${
+                  className={`px-1.5 sm:px-2 py-1 sm:py-1.5 rounded-r-md text-xs sm:text-sm font-bold transition-colors ${
                     dayOffset !== null ? 'hover:bg-white/15' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200'
                   }`}
                   data-testid="filter-next-day"
@@ -495,14 +495,14 @@ export default function ManagerDashboard() {
             
             {/* Панель об'єднання */}
             {mergeMode && selectedForMerge.length > 0 && (
-              <div className="flex items-center gap-2 px-3 py-1 bg-amber-50 border border-amber-200 rounded-lg">
-                <span className="text-sm text-amber-700">
+              <div className="flex items-center gap-2 px-2 sm:px-3 py-1 bg-amber-50 border border-amber-200 rounded-lg">
+                <span className="text-xs sm:text-sm text-amber-700">
                   Вибрано: <b>{selectedForMerge.length}</b>
                 </span>
                 <button
                   onClick={handleMergeOrders}
                   disabled={selectedForMerge.length < 2}
-                  className="px-3 py-1 rounded bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-2 sm:px-3 py-1 rounded bg-amber-500 text-white text-xs sm:text-sm font-medium hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Об'єднати →
                 </button>
@@ -511,52 +511,52 @@ export default function ManagerDashboard() {
             
             <div className="h-6 w-px bg-slate-200 mx-1 hidden md:block" />
             <button 
-              className="rounded-lg border border-corp-primary bg-corp-primary/5 px-3 py-2 text-sm font-medium text-corp-primary hover:bg-corp-primary hover:text-white transition-colors"
+              className="rounded-lg border border-corp-primary bg-corp-primary/5 px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-corp-primary hover:bg-corp-primary hover:text-white transition-colors"
               onClick={() => navigate('/manager-cabinet')}
             >
               Менеджерська
             </button>
             <button 
-              className="rounded-lg border border-corp-gold bg-corp-gold/5 px-3 py-2 text-sm font-medium text-corp-gold hover:bg-corp-gold hover:text-white transition-colors flex items-center gap-1.5"
+              className="rounded-lg border border-corp-gold bg-corp-gold/5 px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-corp-gold hover:bg-corp-gold hover:text-white transition-colors flex items-center gap-1.5"
               onClick={() => navigate('/cabinet')}
               data-testid="nav-cabinet-btn"
             >
               Кабiнет
             </button>
             <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+              className="rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
               onClick={() => navigate('/calendar')}
             >
               Календар
             </button>
             <button 
-              className="rounded-lg border border-sky-300 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-700 hover:bg-sky-100 transition-colors"
+              className="rounded-lg border border-sky-300 bg-sky-50 px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-sky-700 hover:bg-sky-100 transition-colors"
               onClick={() => navigate('/manager/picking-list')}
               data-testid="picking-list-nav-btn"
             >
               📋 Збір
             </button>
             <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+              className="rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
               onClick={() => navigate('/catalog')}
             >
               Каталог
             </button>
             <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+              className="rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
               onClick={() => navigate('/damages')}
             >
               Шкоди
             </button>
             <button 
-              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+              className="rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
               onClick={() => navigate('/reaudit')}
             >
               Переоблік
             </button>
             {user?.role === 'admin' && (
               <button 
-                className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
+                className="rounded-lg border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-colors"
                 onClick={() => navigate('/admin')}
               >
                 Адмін
@@ -566,15 +566,15 @@ export default function ManagerDashboard() {
         </div>
       </div>
 
-      {/* Пошук + Лічильник замовлень в один рядок */}
-      <section className="mx-auto max-w-7xl px-6 py-4">
-        <div className="flex items-stretch gap-4">
+      {/* Пошук + Лічильник замовлень */}
+      <section className="mx-auto max-w-7xl px-2 sm:px-6 py-3 sm:py-4">
+        <div className="flex flex-col sm:flex-row sm:items-stretch gap-3 sm:gap-4">
           {/* Пошук */}
           <div className="flex-1">
-            <label className="block text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Пошук</label>
+            <label className="block text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide mb-1 sm:mb-1.5">Пошук</label>
             <input 
               placeholder="Номер ордеру / Ім'я / Телефон" 
-              className="w-full h-12 px-4 rounded-xl border border-slate-200 bg-white text-sm focus:ring-2 focus:ring-corp-primary focus:border-transparent"
+              className="w-full h-10 sm:h-12 px-3 sm:px-4 rounded-xl border border-slate-200 bg-white text-sm focus:ring-2 focus:ring-corp-primary focus:border-transparent"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -582,10 +582,10 @@ export default function ManagerDashboard() {
           
           {/* Лічильник замовлень */}
           <div className="flex-1">
-            <label className="block text-xs font-medium text-slate-500 uppercase tracking-wide mb-1.5">Замовлення</label>
-            <div className="h-12 px-4 rounded-xl border border-slate-200 bg-white flex items-center justify-between">
-              <span className="text-2xl font-bold text-slate-800">{kpis.today}</span>
-              <span className="text-xs text-slate-500">
+            <label className="block text-[10px] sm:text-xs font-medium text-slate-500 uppercase tracking-wide mb-1 sm:mb-1.5">Замовлення</label>
+            <div className="h-10 sm:h-12 px-3 sm:px-4 rounded-xl border border-slate-200 bg-white flex items-center justify-between gap-2">
+              <span className="text-xl sm:text-2xl font-bold text-slate-800">{kpis.today}</span>
+              <span className="text-[10px] sm:text-xs text-slate-500 text-right">
                 {filterBySearch(newOrders).length} нові / {filterBySearch(preparationCards).length} компл. / {filterBySearch(readyCards).length} видач / {filterBySearch(returnOrders).length} поверн.
               </span>
             </div>
@@ -593,8 +593,8 @@ export default function ManagerDashboard() {
         </div>
       </section>
 
-      {/* Boards - 4 колонки: Комплектація, Готово, Повернення, Часткове */}
-      <main className="mx-auto max-w-7xl px-6 py-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* Boards - 4 колонки */}
+      <main className="mx-auto max-w-7xl px-2 sm:px-6 py-3 sm:py-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6">
         {/* КОЛОНКА 1: На комплектації / Видача сьогодні */}
         <Column title="📦 На комплектації" subtitle="Збір товарів + видача сьогодні" tone="ok">
           {loading ? (
