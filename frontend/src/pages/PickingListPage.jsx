@@ -102,14 +102,14 @@ export default function PickingListPage() {
 
       {/* Toolbar */}
       <div className="bg-white border-b border-corp-border sticky top-0 z-20 print:hidden">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center gap-3">
+        <div className="max-w-7xl mx-auto px-2 sm:px-4 py-2 sm:py-3 flex flex-wrap items-center gap-2 sm:gap-3">
           <button onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/manager'))}
             className="p-2 rounded-lg hover:bg-slate-100 text-slate-600" data-testid="back-btn">
             <ArrowLeft className="w-4 h-4" />
           </button>
 
           {/* Day picker */}
-          <div className="flex items-center bg-slate-100 rounded-lg p-1" data-testid="day-picker">
+          <div className="flex items-center bg-slate-100 rounded-lg p-1 flex-shrink-0" data-testid="day-picker">
             <button onClick={() => setDayOffset(o => o - 1)} title="День назад"
               className="px-2 py-1.5 rounded-md text-slate-500 hover:bg-slate-200 transition"
               data-testid="day-prev-btn">
@@ -154,7 +154,7 @@ export default function PickingListPage() {
       </div>
 
       {/* Content */}
-      <main className="max-w-7xl mx-auto px-4 py-5 space-y-6 print:px-0 print:py-2">
+      <main className="max-w-7xl mx-auto px-2 sm:px-4 py-3 sm:py-5 space-y-4 sm:space-y-6 print:px-0 print:py-2">
         {loading ? (
           <div className="text-center py-20 text-slate-400">Завантаження...</div>
         ) : !data || summary.total_orders === 0 ? (
@@ -237,12 +237,12 @@ function Section({ title, subtitle, tone, children }) {
     emerald: 'border-emerald-200 bg-emerald-50/30',
   }
   return (
-    <section className={`rounded-2xl border ${tones[tone] || 'border-slate-200'} p-4 space-y-3 print:border-0 print:bg-transparent print:p-0`}>
+    <section className={`rounded-2xl border ${tones[tone] || 'border-slate-200'} p-2.5 sm:p-4 space-y-3 print:border-0 print:bg-transparent print:p-0`}>
       <header>
-        <h2 className="text-base font-bold text-slate-800">{title}</h2>
+        <h2 className="text-sm sm:text-base font-bold text-slate-800">{title}</h2>
         {subtitle && <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>}
       </header>
-      <div className="space-y-3">{children}</div>
+      <div className="space-y-2 sm:space-y-3">{children}</div>
     </section>
   )
 }
@@ -251,26 +251,26 @@ function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard,
   return (
     <article className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden break-inside-avoid print:shadow-none print:border print:rounded-none">
       {/* Card header */}
-      <header className="px-4 py-3 border-b border-slate-100 bg-slate-50/40 flex flex-wrap items-center gap-3">
+      <header className="px-3 py-2.5 sm:px-4 sm:py-3 border-b border-slate-100 bg-slate-50/40 flex flex-wrap items-start gap-2 sm:gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={onOpenCard}
               title="Відкрити картку"
-              className="font-bold text-slate-800 text-base hover:text-corp-primary hover:underline underline-offset-2 transition print:no-underline print:text-slate-800"
+              className="font-bold text-slate-800 text-base sm:text-base hover:text-corp-primary hover:underline underline-offset-2 transition print:no-underline print:text-slate-800"
               data-testid={`open-card-${cardId}`}
             >
               {card.order_number}
             </button>
             <span className="text-slate-400">·</span>
             <span className="text-sm text-slate-700 font-medium">{card.customer_name || '—'}</span>
-            {card.customer_phone && (
-              <a href={`tel:${card.customer_phone}`} className="flex items-center gap-1 text-xs text-slate-500 hover:text-corp-primary">
-                <Phone className="w-3 h-3" />{card.customer_phone}
-              </a>
-            )}
           </div>
-          <div className="flex items-center gap-3 text-xs text-slate-500 mt-1 flex-wrap">
+          {card.customer_phone && (
+            <a href={`tel:${card.customer_phone}`} className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-corp-primary mt-1">
+              <Phone className="w-3 h-3" />{card.customer_phone}
+            </a>
+          )}
+          <div className="flex items-center gap-2 sm:gap-3 text-[11px] sm:text-xs text-slate-500 mt-1 flex-wrap">
             {card.rental_start_date && (
               <span className="flex items-center gap-1"><Clock className="w-3 h-3" />Видача: <strong className="text-slate-700">{card.rental_start_date}</strong></span>
             )}
@@ -281,11 +281,11 @@ function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard,
           </div>
         </div>
         {progress && progress.total > 0 && (
-          <div className="text-right">
+          <div className="text-right flex-shrink-0">
             <div className={`text-sm font-bold ${progress.done === progress.total ? 'text-emerald-600' : 'text-slate-600'}`}>
               {progress.done} / {progress.total}
             </div>
-            <div className="w-20 h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1">
+            <div className="w-16 sm:w-20 h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1">
               <div className={`h-full transition-all ${progress.done === progress.total ? 'bg-emerald-500' : 'bg-corp-primary'}`}
                 style={{ width: `${(progress.done / progress.total) * 100}%` }} />
             </div>
@@ -295,17 +295,17 @@ function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard,
 
       {/* Tasks badge row */}
       {card.tasks && card.tasks.length > 0 && (
-        <div className="px-4 py-2 bg-violet-50 border-b border-violet-100 flex flex-wrap items-center gap-2 text-xs">
+        <div className="px-3 sm:px-4 py-2 bg-violet-50 border-b border-violet-100 flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs">
           <CheckSquare className="w-3.5 h-3.5 text-violet-600 flex-shrink-0" />
           <span className="font-semibold text-violet-700 uppercase text-[10px]">Завдання:</span>
           {card.tasks.map(t => (
-            <span key={t.id} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 ${
+            <span key={t.id} className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 break-words ${
               t.priority === 'high' ? 'bg-rose-100 text-rose-700' :
               t.priority === 'medium' ? 'bg-amber-100 text-amber-700' :
               'bg-slate-100 text-slate-700'
             }`} title={`${t.task_type} · ${t.status}`}>
-              {t.title}
-              {t.assignee_name && <span className="text-slate-500 font-medium">→ {t.assignee_name}</span>}
+              <span className="line-clamp-1">{t.title}</span>
+              {t.assignee_name && <span className="text-slate-500 font-medium whitespace-nowrap">→ {t.assignee_name}</span>}
             </span>
           ))}
         </div>
@@ -313,20 +313,20 @@ function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard,
 
       {/* Client comment (yellow) */}
       {card.order_notes?.trim() && (
-        <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-100 text-sm text-amber-900">
+        <div className="px-3 sm:px-4 py-2 sm:py-2.5 bg-amber-50 border-b border-amber-100 text-sm text-amber-900">
           <strong className="text-xs font-semibold uppercase text-amber-700">💬 Коментар клієнта:</strong>
-          <div className="mt-0.5 whitespace-pre-wrap">{card.order_notes}</div>
+          <div className="mt-0.5 whitespace-pre-wrap break-words">{card.order_notes}</div>
         </div>
       )}
 
       {/* Internal prep notes (gray) */}
       {(card.preparation_notes?.trim() || card.issue_notes?.trim()) && (
-        <div className="px-4 py-2 bg-slate-50 border-b border-slate-100 text-xs text-slate-600">
+        <div className="px-3 sm:px-4 py-2 bg-slate-50 border-b border-slate-100 text-xs text-slate-600">
           {card.preparation_notes?.trim() && (
-            <div><strong className="text-slate-500">Комплектація:</strong> {card.preparation_notes}</div>
+            <div className="break-words"><strong className="text-slate-500">Комплектація:</strong> {card.preparation_notes}</div>
           )}
           {card.issue_notes?.trim() && (
-            <div><strong className="text-slate-500">Видача:</strong> {card.issue_notes}</div>
+            <div className="break-words"><strong className="text-slate-500">Видача:</strong> {card.issue_notes}</div>
           )}
         </div>
       )}
@@ -336,47 +336,51 @@ function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard,
         {card.zones.length === 0 ? (
           <div className="px-4 py-3 text-sm text-slate-400 italic">Товари не визначено</div>
         ) : card.zones.map(zone => (
-          <div key={zone.zone} className="px-4 py-3">
+          <div key={zone.zone} className="px-3 py-2.5 sm:px-4 sm:py-3">
             <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500 mb-2">
               Зона: <span className="text-slate-800">{zone.zone}</span>
               <span className="ml-2 text-slate-400 font-normal normal-case">{zone.items.length} поз.</span>
             </div>
-            <ul className="space-y-1.5">
+            <ul className="space-y-2 sm:space-y-1.5">
               {zone.items.map(it => (
                 <li key={`${it.product_id}-${it.sku}`} className="flex flex-col gap-1 text-sm group">
-                  <div className="flex items-center gap-3">
+                  {/* Top row: checkbox + thumb + SKU + qty + actions */}
+                  <div className="flex items-center gap-2 sm:gap-3">
                     {/* Checkbox (only for prep/ready, not awaiting) */}
                     {kind !== 'awaiting' && (
                       <input type="checkbox"
                         checked={!!checked[it.product_id]}
                         onChange={() => onToggle(it.product_id)}
-                        className="w-4 h-4 rounded text-corp-primary focus:ring-1 focus:ring-corp-primary cursor-pointer print:hidden"
+                        className="w-5 h-5 sm:w-4 sm:h-4 rounded text-corp-primary focus:ring-1 focus:ring-corp-primary cursor-pointer flex-shrink-0 print:hidden"
                         data-testid={`check-${cardId}-${it.product_id}`} />
                     )}
                     {/* Image thumb */}
                     <img src={getImageUrl(it.image_url, 'thumb') || FALLBACK_IMAGE} alt={it.name}
                       onError={handleImageError}
-                      className="w-10 h-10 object-contain rounded bg-white border border-slate-100 flex-shrink-0 print:w-6 print:h-6" />
-                    {/* SKU — click to open in Reaudit Cabinet (new tab) */}
-                    {it.sku ? (
-                      <a
-                        href={`/reaudit?sku=${encodeURIComponent(it.sku)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        title="Відкрити картку товару в Кабінеті переобліку (нова вкладка)"
-                        className="text-xs text-corp-primary hover:text-corp-primary/80 hover:underline font-mono w-20 flex-shrink-0 print:no-underline print:text-slate-500"
-                        data-testid={`sku-link-${it.sku}`}
-                      >
-                        {it.sku}
-                      </a>
-                    ) : (
-                      <span className="text-xs text-slate-400 font-mono w-20 flex-shrink-0">—</span>
-                    )}
-                    {/* Name */}
-                    <span className={`flex-1 min-w-0 truncate ${checked[it.product_id] ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
-                      {it.name}
-                    </span>
+                      className="w-12 h-12 sm:w-10 sm:h-10 object-contain rounded bg-white border border-slate-100 flex-shrink-0 print:w-6 print:h-6" />
+                    {/* SKU + Name stacked on mobile, inline on desktop */}
+                    <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center sm:gap-3">
+                      {/* SKU — click to open product card */}
+                      {it.sku ? (
+                        <a
+                          href={`/reaudit?sku=${encodeURIComponent(it.sku)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Відкрити картку товару"
+                          className="text-xs sm:text-xs text-corp-primary hover:underline font-mono font-semibold sm:font-normal sm:w-20 flex-shrink-0 print:no-underline print:text-slate-500"
+                          data-testid={`sku-link-${it.sku}`}
+                        >
+                          {it.sku}
+                        </a>
+                      ) : (
+                        <span className="text-xs text-slate-400 font-mono sm:w-20 flex-shrink-0">—</span>
+                      )}
+                      {/* Name — full width on mobile, flex on desktop */}
+                      <span className={`flex-1 min-w-0 text-sm sm:truncate leading-snug ${checked[it.product_id] ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
+                        {it.name}
+                      </span>
+                    </div>
                     {/* Damage warning */}
                     {it.has_damage_history && (
                       <span title="Має історію шкоди" className="text-amber-500 flex-shrink-0">
@@ -384,20 +388,20 @@ function CardView({ card, cardId, kind, progress, checked, onToggle, onOpenCard,
                       </span>
                     )}
                     {/* Qty */}
-                    <span className="font-bold text-slate-800 text-sm w-12 text-right flex-shrink-0">× {it.qty}</span>
-                    {/* Quick task button */}
+                    <span className="font-bold text-slate-800 text-sm sm:w-12 text-right flex-shrink-0 whitespace-nowrap">× {it.qty}</span>
+                    {/* Quick task button — always visible on mobile, hover on desktop */}
                     <button
                       onClick={(e) => { e.stopPropagation(); onCreateTask({ order_id: card.order_id, order_number: card.order_number, product_id: it.product_id, product_name: it.name, sku: it.sku }) }}
                       title="Створити завдання"
-                      className="opacity-30 group-hover:opacity-100 hover:bg-violet-50 text-violet-600 rounded p-1 transition flex-shrink-0 print:hidden"
+                      className="sm:opacity-30 sm:group-hover:opacity-100 hover:bg-violet-50 text-violet-600 rounded p-1.5 sm:p-1 transition flex-shrink-0 print:hidden"
                       data-testid={`new-task-${cardId}-${it.product_id}`}
                     >
-                      <Plus className="w-3.5 h-3.5" />
+                      <Plus className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
                     </button>
                   </div>
                   {/* Components — additional items that go with this product */}
                   {it.components && (
-                    <div className={`ml-7 ${kind !== 'awaiting' ? 'sm:ml-11' : ''} pl-3 border-l-2 border-sky-200 text-xs text-slate-600 italic print:ml-4`}>
+                    <div className={`ml-7 sm:ml-${kind !== 'awaiting' ? '11' : '13'} pl-3 border-l-2 border-sky-200 text-xs text-slate-600 italic print:ml-4`}>
                       <span className="not-italic font-semibold text-sky-700">+ комплект:</span> {it.components}
                     </div>
                   )}
