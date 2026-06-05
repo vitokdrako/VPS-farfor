@@ -60,6 +60,7 @@ const ProductDetailsModal = ({ productId, boardDates, onClose, onAddToBoard }) =
   const img = product ? resolveImageUrl(product.image_url) : null;
   const available = product?.available ?? product?.quantity ?? 0;
   const maxAdd = Math.max(1, available || 1);
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
 
   return (
     <div
@@ -67,25 +68,31 @@ const ProductDetailsModal = ({ productId, boardDates, onClose, onAddToBoard }) =
       onClick={onClose}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)',
-        zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px',
+        zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: isMobile ? '0' : '24px',
       }}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: '#fff', borderRadius: '12px', maxWidth: '960px', width: '100%',
-          maxHeight: '90vh', overflow: 'hidden', display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          background: '#fff',
+          borderRadius: isMobile ? '0' : '12px',
+          maxWidth: '960px', width: '100%',
+          maxHeight: isMobile ? '100vh' : '90vh',
+          height: isMobile ? '100vh' : 'auto',
+          overflow: 'hidden', display: 'grid',
+          gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)',
+          gridTemplateRows: isMobile ? 'minmax(280px, 45vh) 1fr' : 'auto',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
         }}
         data-testid="product-details-modal"
       >
         {/* Зображення */}
-        <div style={{background: '#f4f6f8', minHeight: '480px', position: 'relative'}}>
+        <div style={{background: '#fafafa', minHeight: isMobile ? '280px' : '480px', position: 'relative'}}>
           <button
             data-testid="product-details-close"
             onClick={onClose}
             style={{
-              position: 'absolute', top: '12px', left: '12px', zIndex: 2,
+              position: 'absolute', top: '12px', right: '12px', zIndex: 2,
               background: '#fff', border: 'none', borderRadius: '50%',
               width: '36px', height: '36px', cursor: 'pointer', fontSize: '18px',
               boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
@@ -94,7 +101,7 @@ const ProductDetailsModal = ({ productId, boardDates, onClose, onAddToBoard }) =
           >×</button>
           {img ? (
             <img src={img} alt={product?.name || ''}
-              style={{width: '100%', height: '100%', objectFit: 'cover', display: 'block'}}
+              style={{width: '100%', height: '100%', objectFit: 'contain', padding: '16px', display: 'block'}}
               onError={(e) => { e.target.style.display = 'none'; }}
             />
           ) : (
@@ -103,7 +110,7 @@ const ProductDetailsModal = ({ productId, boardDates, onClose, onAddToBoard }) =
         </div>
 
         {/* Інфо */}
-        <div style={{padding: '32px', overflowY: 'auto'}}>
+        <div style={{padding: isMobile ? '20px' : '32px', overflowY: 'auto'}}>
           {loading && <div style={{color: '#999'}}>Завантаження...</div>}
           {error && <div style={{color: '#c62828'}}>⚠️ {error}</div>}
           {product && (
@@ -145,12 +152,31 @@ const ProductDetailsModal = ({ productId, boardDates, onClose, onAddToBoard }) =
                 {product.color && <Field label="Колір" value={product.color} />}
                 {product.material && <Field label="Матеріал" value={product.material} />}
                 {product.size && <Field label="Розмір" value={product.size} />}
+                {product.dimensions && <Field label="Габарити" value={product.dimensions} />}
+                {product.width && <Field label="Ширина" value={`${product.width} см`} />}
+                {product.height && <Field label="Висота" value={`${product.height} см`} />}
+                {product.depth && <Field label="Глибина" value={`${product.depth} см`} />}
+                {product.weight && <Field label="Вага" value={`${product.weight} кг`} />}
               </div>
+
+              {/* Комплектація */}
+              {(product.set_contents || product.complectation || product.components) && (
+                <div style={{marginBottom: '20px'}}>
+                  <div style={{fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '6px', letterSpacing: '0.8px'}}>
+                    Комплектація
+                  </div>
+                  <div style={{fontSize: '14px', color: '#0f172a', lineHeight: '1.55', whiteSpace: 'pre-wrap', padding: '12px', background: '#f8fafc', borderRadius: '6px'}}>
+                    {product.set_contents || product.complectation || product.components}
+                  </div>
+                </div>
+              )}
 
               {/* Опис */}
               {product.description && (
                 <div style={{marginBottom: '20px'}}>
-                  <div style={{fontSize: '11px', color: '#999', textTransform: 'uppercase', marginBottom: '6px'}}>Опис</div>
+                  <div style={{fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '6px', letterSpacing: '0.8px'}}>
+                    Опис
+                  </div>
                   <div style={{fontSize: '14px', color: '#475569', lineHeight: '1.55', whiteSpace: 'pre-wrap'}}>
                     {product.description}
                   </div>

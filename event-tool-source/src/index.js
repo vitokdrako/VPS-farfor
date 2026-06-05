@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "@/styles/corporate.css";
+import "@/styles/mobile.css";
 import "@/index.css";
 import App from "@/App";
 

@@ -6,6 +6,7 @@ import { BoardProvider, useBoard } from './context/BoardContext';
 import DateRangePicker from './components/DateRangePicker';
 import ProductCard from './components/ProductCard';
 import ProductDetailsModal from './components/ProductDetailsModal';
+import CheckoutModal from './components/CheckoutModal';
 import BoardItemCard from './components/BoardItemCard';
 import MoodboardCanvas from './components/MoodboardCanvas';
 import ProductFilters from './components/ProductFilters';
@@ -196,6 +197,7 @@ const EventPlannerPage = () => {
   const [showNewBoardModal, setShowNewBoardModal] = useState(false);
   const [showCanvas, setShowCanvas] = useState(false);
   const [detailsProductId, setDetailsProductId] = useState(null);
+  const [showCheckout, setShowCheckout] = useState(false);
 
   useEffect(() => {
     loadInitialData();
@@ -788,8 +790,11 @@ const EventPlannerPage = () => {
                     Візуальний мудборд
                   </button>
                   <button 
-                    className="w-full fd-btn fd-btn-black" 
+                    className="w-full fd-btn fd-btn-black"
+                    onClick={() => setShowCheckout(true)}
+                    disabled={!activeBoard.items || activeBoard.items.length === 0}
                     style={{padding: '9px 12px', fontSize: '11px'}}
+                    data-testid="open-checkout-btn"
                   >
                     Оформити замовлення
                   </button>
@@ -848,6 +853,18 @@ const EventPlannerPage = () => {
           }}
           onClose={() => setDetailsProductId(null)}
           onAddToBoard={handleAddToBoard}
+        />
+      )}
+
+      {showCheckout && activeBoard && (
+        <CheckoutModal
+          board={activeBoard}
+          user={user}
+          onClose={() => setShowCheckout(false)}
+          onSuccess={() => {
+            // Перезавантажуємо мудборди — після конвертації статус оновиться
+            api.get('/event/boards').then(r => setBoards(Array.isArray(r.data) ? r.data : [])).catch(() => {});
+          }}
         />
       )}
     </div>

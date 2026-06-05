@@ -90,34 +90,7 @@ const ProductCard = ({ product, onAddToBoard, boardDates, onOpenDetails }) => {
           {product.name}
         </h3>
         <p className="product-card-sku">{product.sku}</p>
-        
-        {/* Availability info */}
-        {product.available !== undefined && (
-          <div style={{
-            display: 'flex',
-            gap: '8px',
-            alignItems: 'center',
-            marginTop: '6px',
-            fontSize: '11px',
-            color: '#666'
-          }}>
-            <span style={{
-              padding: '2px 8px',
-              borderRadius: '12px',
-              background: product.available > 0 ? '#e8f5e9' : '#ffebee',
-              color: product.available > 0 ? '#2e7d32' : '#c62828',
-              fontWeight: '500'
-            }}>
-              {product.available > 0 ? `✓ Доступно: ${product.available}` : '✗ Недоступно'}
-            </span>
-            {product.reserved > 0 && (
-              <span style={{color: '#999', fontSize: '10px'}}>
-                ({product.reserved} в резерві)
-              </span>
-            )}
-          </div>
-        )}
-        
+
         <div className="product-card-info">
           <span className="product-card-price">
             ₴{product.rental_price}
@@ -128,17 +101,6 @@ const ProductCard = ({ product, onAddToBoard, boardDates, onOpenDetails }) => {
           </span>
         </div>
 
-        {/* Full availability info */}
-        {boardDates?.startDate && boardDates?.endDate && availability && (
-          <div className="product-card-availability">
-            <AvailabilityBadge
-              available={availability.available ?? availability.available_quantity ?? 0}
-              total={product.quantity}
-              requested={1}
-            />
-          </div>
-        )}
-        
         <button
           onClick={handleAdd}
           disabled={isAdding || (availability && !availability.is_available)}
