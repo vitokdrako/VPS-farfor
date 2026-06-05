@@ -210,12 +210,12 @@ const EventPlannerPage = () => {
         api.get('/event/boards').then(r => r.data),
       ]);
       
-      setProducts(productsData);
-      setCategories(categoriesData);
-      setAllSubcategories(subcategoriesData);
-      setBoards(boardsData);
-      
-      if (boardsData.length > 0) {
+      setProducts(Array.isArray(productsData) ? productsData : []);
+      setCategories(Array.isArray(categoriesData) ? categoriesData : []);
+      setAllSubcategories(Array.isArray(subcategoriesData) ? subcategoriesData : []);
+      setBoards(Array.isArray(boardsData) ? boardsData : []);
+
+      if (Array.isArray(boardsData) && boardsData.length > 0) {
         setActiveBoard(boardsData[0]);
       }
     } catch (error) {
@@ -297,13 +297,13 @@ const EventPlannerPage = () => {
     }
 
     try {
-      await api.post(`/boards/${activeBoard.id}/items`, {
+      await api.post(`/event/boards/${activeBoard.id}/items`, {
         product_id: product.product_id,
         quantity: 1,
       });
       
       // Reload active board
-      const updatedBoard = await api.get(`/boards/${activeBoard.id}`).then(r => r.data);
+      const updatedBoard = await api.get(`/event/boards/${activeBoard.id}`).then(r => r.data);
       setActiveBoard(updatedBoard);
       
       // Update boards list
@@ -321,7 +321,7 @@ const EventPlannerPage = () => {
       await api.patch(`/boards/${activeBoard.id}/items/${itemId}`, updateData);
       
       // Reload active board
-      const updatedBoard = await api.get(`/boards/${activeBoard.id}`).then(r => r.data);
+      const updatedBoard = await api.get(`/event/boards/${activeBoard.id}`).then(r => r.data);
       setActiveBoard(updatedBoard);
       setBoards(boards.map(b => b.id === updatedBoard.id ? updatedBoard : b));
     } catch (error) {
@@ -334,10 +334,10 @@ const EventPlannerPage = () => {
     if (!activeBoard) return;
 
     try {
-      await api.delete(`/boards/${activeBoard.id}/items/${itemId}`);
+      await api.delete(`/event/boards/${activeBoard.id}/items/${itemId}`);
       
       // Reload active board
-      const updatedBoard = await api.get(`/boards/${activeBoard.id}`).then(r => r.data);
+      const updatedBoard = await api.get(`/event/boards/${activeBoard.id}`).then(r => r.data);
       setActiveBoard(updatedBoard);
       setBoards(boards.map(b => b.id === updatedBoard.id ? updatedBoard : b));
     } catch (error) {

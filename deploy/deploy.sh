@@ -31,7 +31,9 @@ cd "$REPO_ROOT/frontend"
 if [ ! -d node_modules ]; then
   yarn install --frozen-lockfile
 fi
-yarn build
+# Очищаємо PUBLIC_URL щоб білд був на корені (порт :8080)
+unset PUBLIC_URL
+PUBLIC_URL='' yarn build
 sudo rm -rf /var/www/rentalhub-admin-build
 sudo cp -r build /var/www/rentalhub-admin-build
 sudo chown -R www-data:www-data /var/www/rentalhub-admin-build
@@ -40,16 +42,19 @@ echo ""
 
 # ===== 3. Nginx конфіги =====
 echo "═══ [3/4] Налаштовуємо Nginx ═══"
+# Очищаємо ВСІ старі симлінки щоб уникнути конфліктів default_server
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo rm -f /etc/nginx/sites-enabled/farforrent
+sudo rm -f /etc/nginx/sites-enabled/event-tool
+sudo rm -f /etc/nginx/sites-enabled/rentalhub-admin
+sudo rm -f /etc/nginx/sites-enabled/rentalhub
+
 sudo cp "$REPO_ROOT/deploy/nginx-event-tool.conf"    /etc/nginx/sites-available/event-tool
 sudo cp "$REPO_ROOT/deploy/nginx-rentalhub.conf"     /etc/nginx/sites-available/rentalhub-admin
 
-# Виправляємо шлях у nginx-rentalhub.conf на новий
-sudo sed -i 's|/var/www/farforrent/frontend/build|/var/www/rentalhub-admin-build|g' /etc/nginx/sites-available/rentalhub-admin
-
 sudo ln -sf /etc/nginx/sites-available/event-tool       /etc/nginx/sites-enabled/
 sudo ln -sf /etc/nginx/sites-available/rentalhub-admin  /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo rm -f /etc/nginx/sites-enabled/farforrent
+
 sudo nginx -t
 sudo systemctl reload nginx
 echo "✅ Nginx OK"
