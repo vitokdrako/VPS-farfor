@@ -394,7 +394,8 @@ async def get_products(
         sql += " AND color LIKE :color"
         params["color"] = f"%{color}%"
     
-    sql += " ORDER BY category_name, subcategory_name, name LIMIT :limit OFFSET :skip"
+    # Сортування — новинки зверху (за ID DESC). Якщо клієнт явно фільтрує — лишаємо групування
+    sql += " ORDER BY product_id DESC LIMIT :limit OFFSET :skip"
     params["limit"] = limit
     params["skip"] = skip
     

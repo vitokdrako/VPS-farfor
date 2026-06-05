@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { BoardProvider, useBoard } from './context/BoardContext';
 import DateRangePicker from './components/DateRangePicker';
 import ProductCard from './components/ProductCard';
+import ProductDetailsModal from './components/ProductDetailsModal';
 import BoardItemCard from './components/BoardItemCard';
 import MoodboardCanvas from './components/MoodboardCanvas';
 import ProductFilters from './components/ProductFilters';
@@ -194,6 +195,7 @@ const EventPlannerPage = () => {
   const [hasMore, setHasMore] = useState(true);
   const [showNewBoardModal, setShowNewBoardModal] = useState(false);
   const [showCanvas, setShowCanvas] = useState(false);
+  const [detailsProductId, setDetailsProductId] = useState(null);
 
   useEffect(() => {
     loadInitialData();
@@ -619,6 +621,7 @@ const EventPlannerPage = () => {
                     startDate: activeBoard?.rental_start_date,
                     endDate: activeBoard?.rental_end_date,
                   }}
+                  onOpenDetails={(id) => setDetailsProductId(id)}
                 />
               ))}
             </div>
@@ -833,6 +836,18 @@ const EventPlannerPage = () => {
           board={activeBoard}
           onClose={() => setShowCanvas(false)}
           onSave={handleSaveCanvas}
+        />
+      )}
+
+      {detailsProductId && (
+        <ProductDetailsModal
+          productId={detailsProductId}
+          boardDates={{
+            startDate: activeBoard?.rental_start_date,
+            endDate: activeBoard?.rental_end_date,
+          }}
+          onClose={() => setDetailsProductId(null)}
+          onAddToBoard={handleAddToBoard}
         />
       )}
     </div>

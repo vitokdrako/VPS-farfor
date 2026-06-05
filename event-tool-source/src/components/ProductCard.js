@@ -46,7 +46,12 @@ const ProductCard = ({ product, onAddToBoard, boardDates }) => {
 
   return (
     <div className="product-card">
-      <div className="product-card-image">
+      <div
+        className="product-card-image"
+        onClick={() => onOpenDetails && onOpenDetails(product.product_id)}
+        style={{cursor: onOpenDetails ? 'pointer' : 'default'}}
+        data-testid={`product-card-image-${product.product_id}`}
+      >
         {getImageUrl() ? (
           <img
             src={getImageUrl()}
