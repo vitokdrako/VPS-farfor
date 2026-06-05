@@ -1501,6 +1501,130 @@ async def convert_to_order(
         )
 
 # ============================================================================
+# КАБІНЕТ КЛІЄНТА — список замовлень
+# ============================================================================
+
+@router.get("/orders")
+async def get_my_orders(
+    db: Session = Depends(get_rh_db),
+    token: str = Depends(get_token_from_header)
+):
+    """Список замовлень поточного авторизованого клієнта Event Tool"""
+    customer = get_current_customer(token, db)
+    email = (customer.get("email") or "").lower().strip()
+    if not email:
+        return []
+
+    # Знайти client_user_id за email
+    cu = db.execute(
+        text("SELECT id FROM client_users WHERE email_normalized = :e"),
+        {"e": email}
+    ).fetchone()
+    if not cu:
+        return []
+    client_user_id = cu[0]
+
+    rows = db.execute(text("""
+        SELECT order_id, order_number, status, rental_start_date, rental_end_date,
+               rental_days, event_date, event_location, total_price, deposit_amount,
+               source, created_at, notes
+        FROM orders
+        WHERE client_user_id = :cuid
+        ORDER BY created_at DESC
+        LIMIT 100
+    """), {"cuid": client_user_id}).fetchall()
+
+    result = []
+    for r in rows:
+        order_id = r[0]
+        items_count = db.execute(
+            text("SELECT COUNT(*) FROM order_items WHERE order_id = :oid"),
+            {"oid": order_id}
+        ).scalar() or 0
+        result.append({
+            "order_id": order_id,
+            "order_number": r[1],
+            "status": r[2],
+            "rental_start_date": r[3].isoformat() if r[3] else None,
+            "rental_end_date": r[4].isoformat() if r[4] else None,
+            "rental_days": r[5],
+            "event_date": r[6].isoformat() if r[6] else None,
+            "event_location": r[7],
+            "total_price": float(r[8] or 0),
+            "deposit_amount": float(r[9] or 0),
+            "source": r[10],
+            "created_at": r[11].isoformat() if r[11] else None,
+            "notes": r[12],
+            "items_count": items_count,
+        })
+    return result
+
+
+@router.get("/orders/{order_id}")
+async def get_my_order_details(
+    order_id: int,
+    db: Session = Depends(get_rh_db),
+    token: str = Depends(get_token_from_header)
+):
+    """Деталі окремого замовлення (тільки своє)"""
+    customer = get_current_customer(token, db)
+    email = (customer.get("email") or "").lower().strip()
+
+    cu = db.execute(
+        text("SELECT id FROM client_users WHERE email_normalized = :e"),
+        {"e": email}
+    ).fetchone()
+    if not cu:
+        raise HTTPException(status_code=404, detail="Order not found")
+    client_user_id = cu[0]
+
+    order_row = db.execute(text("""
+        SELECT order_id, order_number, status, rental_start_date, rental_end_date,
+               rental_days, event_date, event_location, total_price, deposit_amount,
+               source, created_at, notes, customer_name, customer_phone, customer_email
+        FROM orders
+        WHERE order_id = :oid AND client_user_id = :cuid
+    """), {"oid": order_id, "cuid": client_user_id}).fetchone()
+    if not order_row:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    items_rows = db.execute(text("""
+        SELECT product_id, product_name, quantity, price, total_rental, image_url
+        FROM order_items WHERE order_id = :oid
+    """), {"oid": order_id}).fetchall()
+
+    return {
+        "order_id": order_row[0],
+        "order_number": order_row[1],
+        "status": order_row[2],
+        "rental_start_date": order_row[3].isoformat() if order_row[3] else None,
+        "rental_end_date": order_row[4].isoformat() if order_row[4] else None,
+        "rental_days": order_row[5],
+        "event_date": order_row[6].isoformat() if order_row[6] else None,
+        "event_location": order_row[7],
+        "total_price": float(order_row[8] or 0),
+        "deposit_amount": float(order_row[9] or 0),
+        "source": order_row[10],
+        "created_at": order_row[11].isoformat() if order_row[11] else None,
+        "notes": order_row[12],
+        "customer_name": order_row[13],
+        "customer_phone": order_row[14],
+        "customer_email": order_row[15],
+        "items": [
+            {
+                "product_id": ir[0],
+                "product_name": ir[1],
+                "quantity": ir[2],
+                "price": float(ir[3] or 0),
+                "total_rental": float(ir[4] or 0),
+                "image_url": normalize_image_url(ir[5]),
+            }
+            for ir in items_rows
+        ],
+    }
+
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 

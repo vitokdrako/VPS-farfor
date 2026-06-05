@@ -34,19 +34,14 @@ const ProductCard = ({ product, onAddToBoard, boardDates }) => {
   };
 
   const getImageUrl = () => {
-    if (product.image_url) {
-      // В базі зберігається: catalog/products/Girlyandy/Girlyanda-temno-zelenyj-drit-25-m.png
-      // Правильний URL: https://www.farforrent.com.ua/image/cache/catalog/products/Girlyandy/Girlyanda-temno-zelenyj-drit-25-m-300x200.png
-      let imagePath = product.image_url;
-      
-      // Видаляємо розширення файлу і додаємо розмір
-      const pathWithoutExt = imagePath.replace(/\.(png|jpg|jpeg|webp)$/i, '');
-      const ext = imagePath.match(/\.(png|jpg|jpeg|webp)$/i)?.[0] || '.png';
-      
-      // Формуємо URL з правильною структурою (використовуємо 300x200 - це доступний розмір)
-      return `https://www.farforrent.com.ua/image/cache/${pathWithoutExt}-300x200${ext}`;
-    }
-    return null;
+    if (!product.image_url) return null;
+    const url = product.image_url;
+    // Повний URL — повертаємо як є
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    // Абсолютний шлях same-origin
+    if (url.startsWith('/')) return url;
+    // Відносний шлях з нашого бекенду (static/images/... або uploads/...)
+    return `/${url}`;
   };
 
   return (

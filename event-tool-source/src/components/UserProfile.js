@@ -2,25 +2,43 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/axios';
+import { ordersApi } from '../api/orders';
+
+const ORDER_STATUS_LABELS = {
+  pending: { text: 'Очікує підтвердження', color: '#b58a00', bg: '#fff7d6' },
+  awaiting_customer: { text: 'Чекає на клієнта', color: '#b58a00', bg: '#fff7d6' },
+  processing: { text: 'В обробці', color: '#1565c0', bg: '#e3f2fd' },
+  ready_for_issue: { text: 'Готове до видачі', color: '#1565c0', bg: '#e3f2fd' },
+  issued: { text: 'Видано', color: '#2e7d32', bg: '#e8f5e9' },
+  on_rent: { text: 'В оренді', color: '#2e7d32', bg: '#e8f5e9' },
+  returned: { text: 'Повернено', color: '#555', bg: '#eee' },
+  completed: { text: 'Завершено', color: '#555', bg: '#eee' },
+  cancelled: { text: 'Скасовано', color: '#c62828', bg: '#ffebee' },
+};
 
 const UserProfile = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [boards, setBoards] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedBoard, setSelectedBoard] = useState(null);
+  const [activeTab, setActiveTab] = useState('orders'); // 'orders' | 'boards'
 
   useEffect(() => {
-    loadBoards();
+    loadData();
   }, []);
 
-  const loadBoards = async () => {
+  const loadData = async () => {
     try {
       setLoading(true);
-      const boardsData = await api.get('/boards').then(r => r.data);
+      const [boardsData, ordersData] = await Promise.all([
+        api.get('/event/boards').then(r => r.data).catch(() => []),
+        ordersApi.list().catch(() => []),
+      ]);
       setBoards(boardsData);
+      setOrders(ordersData);
     } catch (error) {
-      console.error('Failed to load boards:', error);
+      console.error('Failed to load profile data:', error);
     } finally {
       setLoading(false);
     }
@@ -32,7 +50,7 @@ const UserProfile = () => {
     }
 
     try {
-      await api.delete(`/boards/${boardId}`);
+      await api.delete(`/event/boards/${boardId}`);
       setBoards(boards.filter(b => b.id !== boardId));
       alert('✅ Мудборд видалено');
     } catch (error) {
@@ -102,7 +120,7 @@ const UserProfile = () => {
           <h2 style={{fontSize: '24px', fontWeight: '600', color: '#333', marginBottom: '16px'}}>
             Вітаємо, {user?.firstname}!
           </h2>
-          <div style={{display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px'}}>
+          <div style={{display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px'}}>
             <div>
               <div style={{fontSize: '12px', color: '#999', textTransform: 'uppercase', marginBottom: '8px'}}>
                 Email
@@ -121,17 +139,136 @@ const UserProfile = () => {
             </div>
             <div>
               <div style={{fontSize: '12px', color: '#999', textTransform: 'uppercase', marginBottom: '8px'}}>
-                Мудбордів створено
+                Мудбордів
               </div>
               <div style={{fontSize: '24px', fontWeight: '600', color: '#333'}}>
                 {boards.length}
               </div>
             </div>
+            <div>
+              <div style={{fontSize: '12px', color: '#999', textTransform: 'uppercase', marginBottom: '8px'}}>
+                Замовлень
+              </div>
+              <div style={{fontSize: '24px', fontWeight: '600', color: '#333'}}>
+                {orders.length}
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Boards List */}
-        <div>
+        {/* Tabs */}
+        <div style={{display: 'flex', gap: '4px', borderBottom: '1px solid #e0e0e0', marginBottom: '24px'}}>
+          {[
+            {key: 'orders', label: `Мої замовлення (${orders.length})`},
+            {key: 'boards', label: `Мої мудборди (${boards.length})`},
+          ].map(t => (
+            <button
+              key={t.key}
+              data-testid={`profile-tab-${t.key}`}
+              onClick={() => setActiveTab(t.key)}
+              style={{
+                padding: '12px 24px',
+                background: 'transparent',
+                border: 'none',
+                borderBottom: activeTab === t.key ? '2px solid #0a3d2e' : '2px solid transparent',
+                fontWeight: activeTab === t.key ? '600' : '400',
+                color: activeTab === t.key ? '#0a3d2e' : '#666',
+                cursor: 'pointer',
+                fontSize: '14px',
+                marginBottom: '-1px',
+              }}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Замовлення */}
+        {activeTab === 'orders' && (
+          <div data-testid="profile-orders-section">
+            {loading ? (
+              <div className="text-center py-12" style={{color: '#999'}}>Завантаження...</div>
+            ) : orders.length === 0 ? (
+              <div style={{background: '#fff', borderRadius: '8px', padding: '64px', textAlign: 'center'}}>
+                <div style={{fontSize: '48px', marginBottom: '16px'}}>📦</div>
+                <div style={{fontSize: '18px', fontWeight: '600', color: '#333', marginBottom: '8px'}}>
+                  У вас поки немає замовлень
+                </div>
+                <div style={{fontSize: '14px', color: '#999', marginBottom: '24px'}}>
+                  Створіть мудборд і оформіть перше замовлення
+                </div>
+                <button onClick={() => navigate('/')} className="fd-btn fd-btn-black">
+                  Перейти до каталогу
+                </button>
+              </div>
+            ) : (
+              <div style={{display: 'flex', flexDirection: 'column', gap: '16px'}}>
+                {orders.map((o) => {
+                  const status = ORDER_STATUS_LABELS[o.status] || {text: o.status, color: '#555', bg: '#eee'};
+                  return (
+                    <div
+                      key={o.order_id}
+                      data-testid={`order-card-${o.order_id}`}
+                      style={{
+                        background: '#fff',
+                        borderRadius: '8px',
+                        padding: '20px 24px',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                        border: '1px solid #ececec',
+                      }}
+                    >
+                      <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', flexWrap: 'wrap'}}>
+                        <div>
+                          <div style={{display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px'}}>
+                            <h4 style={{fontSize: '17px', fontWeight: '700', color: '#222', margin: 0}}>
+                              {o.order_number}
+                            </h4>
+                            <span style={{
+                              padding: '3px 10px',
+                              borderRadius: '999px',
+                              fontSize: '12px',
+                              fontWeight: '600',
+                              color: status.color,
+                              background: status.bg,
+                            }}>
+                              {status.text}
+                            </span>
+                          </div>
+                          <div style={{fontSize: '13px', color: '#666', marginBottom: '4px'}}>
+                            📅 {formatDate(o.rental_start_date)} → {formatDate(o.rental_end_date)}
+                            {o.rental_days ? ` (${o.rental_days} дн)` : ''}
+                          </div>
+                          {o.event_location && (
+                            <div style={{fontSize: '13px', color: '#666'}}>
+                              🎉 {o.event_location}
+                            </div>
+                          )}
+                          <div style={{fontSize: '12px', color: '#999', marginTop: '6px'}}>
+                            {o.items_count} позицій • створено {formatDate(o.created_at)}
+                          </div>
+                        </div>
+                        <div style={{textAlign: 'right'}}>
+                          <div style={{fontSize: '22px', fontWeight: '700', color: '#0a3d2e'}}>
+                            ₴{o.total_price.toFixed(2)}
+                          </div>
+                          {o.deposit_amount > 0 && (
+                            <div style={{fontSize: '12px', color: '#888', marginTop: '4px'}}>
+                              Завдаток: ₴{o.deposit_amount.toFixed(2)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Мудборди */}
+        {activeTab === 'boards' && (
+        <div data-testid="profile-boards-section">
           <div className="flex items-center justify-between mb-6">
             <h3 style={{fontSize: '20px', fontWeight: '600', color: '#333'}}>
               Мої мудборди
@@ -280,6 +417,7 @@ const UserProfile = () => {
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   );

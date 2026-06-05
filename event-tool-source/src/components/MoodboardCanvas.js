@@ -88,12 +88,12 @@ const MoodboardCanvas = ({ board, onClose, onSave }) => {
   const [showTemplates, setShowTemplates] = useState(false);
   const canvasRef = useRef(null);
 
-  // Helper function to get correct image URL
+  // Helper function to get correct image URL — same-origin з нашого бекенду
   const getImageUrl = (imageUrl) => {
     if (!imageUrl) return null;
-    const pathWithoutExt = imageUrl.replace(/\.(png|jpg|jpeg|webp)$/i, '');
-    const ext = imageUrl.match(/\.(png|jpg|jpeg|webp)$/i)?.[0] || '.png';
-    return `https://www.farforrent.com.ua/image/cache/${pathWithoutExt}-300x200${ext}`;
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) return imageUrl;
+    if (imageUrl.startsWith('/')) return imageUrl;
+    return `/${imageUrl}`;
   };
 
   // Initialize elements from board items if not loaded
