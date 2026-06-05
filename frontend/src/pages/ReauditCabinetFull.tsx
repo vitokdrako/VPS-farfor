@@ -394,7 +394,8 @@ function TabEdit({ item, categories, subcategoriesMap, hashtags: hashtagDict, sh
           method: 'POST', headers, body: JSON.stringify(payload)
         })
         if (!res.ok) { const r = await res.json(); alert('Помилка: ' + (r.detail || '')); return }
-        onSave()
+        const created = await res.json()
+        onSave(created?.product_id || created?.id || null)
         return
       }
       const editRes = await fetch(`${BACKEND_URL}/api/audit/items/${item.id}/edit-full`, {
@@ -405,7 +406,7 @@ function TabEdit({ item, categories, subcategoriesMap, hashtags: hashtagDict, sh
         method: 'PUT', headers,
         body: JSON.stringify({ description: form.description, care_instructions: form.careInstructions })
       })
-      onSave()
+      onSave(item.id)
     } catch (e) { alert('Помилка: ' + String(e)) }
     finally { setSaving(false) }
   }
@@ -764,15 +765,18 @@ function CreateProductModal({ onClose, onCreated, categories, subcategoriesMap, 
       }
     : emptyItem
   const isDup = !!prefillItem
+  const [createdId, setCreatedId] = useState<number | null>(null)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4" data-testid="create-product-modal">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div className="relative bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-hidden flex flex-col shadow-xl">
         <div className="flex items-center justify-between px-4 py-3 border-b border-corp-border bg-corp-bg-light/50">
           <div className="min-w-0">
-            <div className="text-xs text-corp-text-muted">{isDup ? `Дублювання з ${prefillItem.code || ''}` : 'Новий товар'}</div>
+            <div className="text-xs text-corp-text-muted">
+              {createdId ? 'Крок 2/2: Завантажте фото' : (isDup ? `Дублювання з ${prefillItem.code || ''}` : 'Крок 1/2: Дані товару')}
+            </div>
             <h2 className="text-base sm:text-lg font-bold text-corp-text-dark">
-              {isDup ? 'Створити копію позиції' : 'Додати позицію в каталог'}
+              {createdId ? '📸 Додайте фото товара' : (isDup ? 'Створити копію позиції' : 'Додати позицію в каталог')}
             </h2>
           </div>
           <button onClick={onClose} className="p-1.5 hover:bg-slate-200 rounded-lg text-corp-text-muted flex-shrink-0" data-testid="create-modal-close-btn">
@@ -780,9 +784,30 @@ function CreateProductModal({ onClose, onCreated, categories, subcategoriesMap, 
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
-          <TabEdit item={initialItem} categories={categories} subcategoriesMap={subcategoriesMap}
-            hashtags={hashtags} shapes={shapes} colorDict={colorDict} materialDict={materialDict}
-            onSave={onCreated} />
+          {!createdId ? (
+            <TabEdit item={initialItem} categories={categories} subcategoriesMap={subcategoriesMap}
+              hashtags={hashtags} shapes={shapes} colorDict={colorDict} materialDict={materialDict}
+              onSave={(newId: number) => {
+                if (newId) setCreatedId(newId)
+                else onCreated()
+              }} />
+          ) : (
+            <div className="space-y-4">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-800">
+                ✅ Товар створено. Тепер додайте фотографії (можна кілька одночасно).
+              </div>
+              <ProductImageGallery productId={createdId} />
+              <div className="flex justify-end gap-2 pt-2 border-t border-corp-border">
+                <button
+                  onClick={onCreated}
+                  className="px-4 py-2 rounded-lg bg-corp-primary text-white hover:bg-corp-primary/90 font-medium text-sm"
+                  data-testid="finish-create-btn"
+                >
+                  Готово
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
