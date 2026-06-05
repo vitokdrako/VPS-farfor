@@ -41,7 +41,6 @@ import PersonalCabinet from './pages/PersonalCabinet';
 import SyncPanel from './pages/SyncPanel';
 import DocumentTemplatesAdmin from './pages/DocumentTemplatesAdmin';
 import UnifiedCalendar from './pages/UnifiedCalendarNew';
-import PublicCatalog from './pages/PublicCatalog';
 
 // Декодування JWT без бібліотеки
 function parseJwt(token: string) {
@@ -441,9 +440,9 @@ function App() {
             } 
           />
           
-          {/* Публічний каталог для клієнтів — головна сторінка */}
-          <Route path="/" element={<PublicCatalog />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
+          {/* Default redirect */}
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
         </div>
         {/* Legal Footer - показується на всіх сторінках, крім кабінету на мобільному */}
