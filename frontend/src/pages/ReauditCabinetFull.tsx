@@ -676,7 +676,7 @@ function TabHistory({ item }: any) {
 
 /* ─────────── Product detail modal ─────────── */
 function ProductModal({ item, onClose, categories, subcategoriesMap, hashtags, shapes, colorDict, materialDict, onItemUpdated, onToggle, onDelete, onDuplicate }: any) {
-  const [tab, setTab] = useState<'info' | 'edit' | 'damage' | 'history'>('info')
+  const [tab, setTab] = useState<'info' | 'edit' | 'photos' | 'damage' | 'history'>('info')
   const [showConditionPanel, setShowConditionPanel] = useState(false)
 
   if (!item) return null
