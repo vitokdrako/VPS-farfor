@@ -3,7 +3,7 @@ import AvailabilityBadge from './AvailabilityBadge';
 import { useAvailability } from '../hooks/useAvailability';
 import './ProductCard.css';
 
-const ProductCard = ({ product, onAddToBoard, boardDates }) => {
+const ProductCard = ({ product, onAddToBoard, boardDates, onOpenDetails }) => {
   const [isAdding, setIsAdding] = useState(false);
   const { availability, loading } = useAvailability(
     product.product_id,
