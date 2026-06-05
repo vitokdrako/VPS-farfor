@@ -203,7 +203,6 @@ const EventPlannerPage = () => {
   useEffect(() => {
     if (!activeBoard?.rental_start_date || !activeBoard?.rental_end_date) return;
     reloadProductsForDates(activeBoard.rental_start_date, activeBoard.rental_end_date);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBoard?.rental_start_date, activeBoard?.rental_end_date]);
 
   const buildProductsUrl = (skip, limit, dateFrom, dateTo) => {
@@ -479,7 +478,6 @@ const EventPlannerPage = () => {
     }, 350); // debounce 350ms
 
     return () => clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, selectedCategory, selectedSubcategory, selectedColor]);
 
   const filteredProducts = products.filter(p => {
