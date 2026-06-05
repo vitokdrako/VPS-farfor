@@ -7,7 +7,8 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { getImageUrl, handleImageError, FALLBACK_IMAGE } from '../utils/imageHelper'
 import CorporateHeader from '../components/CorporateHeader'
 import ProductConditionPanel from '../components/ProductConditionPanel'
-import { Filter, X, ChevronDown, Search, Check, AlertTriangle, Clock, Package, Edit3, History, Shield, Upload, Download, Plus, Camera, Trash2, Power, PowerOff, Eye, EyeOff } from 'lucide-react'
+import ProductImageGallery from '../components/ProductImageGallery'
+import { Filter, X, ChevronDown, Search, Check, AlertTriangle, Clock, Package, Edit3, History, Shield, Upload, Download, Plus, Camera, Trash2, Power, PowerOff, Eye, EyeOff, Image as ImageIcon } from 'lucide-react'
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || ''
 const cls = (...a: (string | false | null | undefined)[]) => a.filter(Boolean).join(' ')
@@ -683,6 +684,7 @@ function ProductModal({ item, onClose, categories, subcategoriesMap, hashtags, s
   const tabs = [
     { key: 'info', label: 'Інфо', icon: Package },
     { key: 'edit', label: 'Редагування', icon: Edit3 },
+    { key: 'photos', label: 'Фото', icon: ImageIcon },
     { key: 'damage', label: 'Шкода', icon: AlertTriangle },
     { key: 'history', label: 'Історія', icon: History },
   ]
@@ -731,6 +733,7 @@ function ProductModal({ item, onClose, categories, subcategoriesMap, hashtags, s
           <div className="flex-1 overflow-y-auto p-4">
             {tab === 'info' && <TabInfo item={item} onMarkAudited={handleMarkAudited} onToggle={onToggle} onDelete={onDelete} onShowCondition={() => setShowConditionPanel(true)} onDuplicate={onDuplicate} />}
             {tab === 'edit' && <TabEdit item={item} categories={categories} subcategoriesMap={subcategoriesMap} hashtags={hashtags} shapes={shapes} colorDict={colorDict} materialDict={materialDict} onSave={() => { onItemUpdated(); setTab('info') }} />}
+            {tab === 'photos' && <ProductImageGallery productId={item.id || item.product_id} onChange={() => onItemUpdated && onItemUpdated()} />}
             {tab === 'damage' && <TabDamage item={item} onDone={onItemUpdated} />}
             {tab === 'history' && <TabHistory item={item} />}
           </div>

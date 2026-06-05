@@ -7,6 +7,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { getImageUrl, handleImageError } from '../utils/imageHelper'
 import CorporateHeader from '../components/CorporateHeader'
 import FamiliesManager from '../components/catalog/FamiliesManager'
+import ProductImageGallery from '../components/ProductImageGallery'
 import { Filter, X, ChevronDown, ChevronUp } from 'lucide-react'
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || ''
@@ -1562,14 +1563,9 @@ function ProductDetailModal({ item, onClose, dateFilterActive }) {
           
           {/* Content */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Image */}
+            {/* Multi-image gallery */}
             <div>
-              <img
-                src={getImageUrl(item.image)}
-                alt={item.name}
-                className="w-full h-64 object-cover rounded-xl bg-corp-bg-light"
-                onError={handleImageError}
-              />
+              <ProductImageGallery productId={item.product_id || item.id} compact />
             </div>
             
             {/* Info */}
