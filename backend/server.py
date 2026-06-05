@@ -44,6 +44,8 @@ default_origins = [
     "https://www.rentalhub.farforrent.com.ua",
     "https://events.farforrent.com.ua",
     "https://backrentalhub.farforrent.com.ua",
+    "http://173.242.49.48",          # VPS Event Tool (клієнти)
+    "http://173.242.49.48:8080",     # VPS RentalHub адмінка
     "http://localhost:3000",
     "http://localhost:3001",
     "https://item-photos.preview.emergentagent.com",  # Emergent preview
