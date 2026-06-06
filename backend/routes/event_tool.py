@@ -499,34 +499,92 @@ async def get_products(
 
 @router.get("/products/{product_id}")
 async def get_product(product_id: int, db: Session = Depends(get_rh_db)):
-    """Деталі товару"""
-    result = db.execute(text("""
-        SELECT product_id, sku, name, category_name, subcategory_name,
-               rental_price, image_url, color, material, size, description,
-               quantity, frozen_quantity, price
+    """Деталі товару (включно з усіма фото з product_images і розмірами)"""
+    # Перевіряємо які колонки реально є в `products`
+    cols_rows = db.execute(text("SHOW COLUMNS FROM products")).fetchall()
+    existing_cols = {r[0] for r in cols_rows}
+
+    def col(name, default="NULL"):
+        return name if name in existing_cols else default
+
+    sql = f"""
+        SELECT
+            product_id, sku, name,
+            {col('category_name', "''")} AS category_name,
+            {col('subcategory_name', "''")} AS subcategory_name,
+            {col('rental_price', '0')} AS rental_price,
+            image_url,
+            {col('color', "''")} AS color,
+            {col('material', "''")} AS material,
+            {col('size', "''")} AS size,
+            {col('description', "''")} AS description,
+            {col('quantity', '0')} AS quantity,
+            {col('frozen_quantity', '0')} AS frozen_quantity,
+            {col('price', '0')} AS price,
+            {col('height', 'NULL')} AS height,
+            {col('width', 'NULL')} AS width,
+            {col('depth', 'NULL')} AS depth,
+            {col('length', 'NULL')} AS length_cm,
+            {col('diameter', 'NULL')} AS diameter,
+            {col('weight', 'NULL')} AS weight,
+            {col('set_contents', "''")} AS set_contents,
+            {col('complectation', "''")} AS complectation
         FROM products WHERE product_id = :id
-    """), {"id": product_id})
-    row = result.fetchone()
-    
+    """
+    row = db.execute(text(sql), {"id": product_id}).fetchone()
+
     if not row:
         raise HTTPException(status_code=404, detail="Product not found")
-    
+
+    # Усі фото з product_images (якщо є)
+    images = []
+    primary_image = normalize_image_url(row[6])
+    try:
+        img_rows = db.execute(text("""
+            SELECT image_url, is_primary, sort_order
+            FROM product_images
+            WHERE product_id = :id
+            ORDER BY is_primary DESC, sort_order ASC, id ASC
+        """), {"id": product_id}).fetchall()
+        for ir in img_rows:
+            url = normalize_image_url(ir[0])
+            if url:
+                images.append(url)
+    except Exception:
+        # таблиці може не бути на staging — не падаємо
+        pass
+
+    # Якщо в product_images немає — використовуємо image_url з products
+    if not images and primary_image:
+        images = [primary_image]
+
     return {
         "product_id": row[0],
         "sku": row[1],
         "name": row[2],
         "category_name": row[3],
         "subcategory_name": row[4],
-        "rental_price": float(row[5]) if row[5] else 0,
-        "image_url": normalize_image_url(row[6]),
+        "rental_price": float(row[5]) if row[5] is not None else 0,
+        "image_url": primary_image or (images[0] if images else None),
+        "images": images,                  # <-- масив для каруселі
         "color": row[7],
         "material": row[8],
         "size": row[9],
         "description": row[10],
-        "quantity": row[11] or 0,
-        "frozen_quantity": row[12] or 0,
-        "available": max(0, (row[11] or 0) - (row[12] or 0)),
-        "price": float(row[13]) if row[13] else 0
+        "quantity": int(row[11] or 0),
+        "frozen_quantity": int(row[12] or 0),
+        "available": max(0, int(row[11] or 0) - int(row[12] or 0)),
+        "price": float(row[13]) if row[13] is not None else 0,
+        # Розміри (числові, в см / кг)
+        "height": float(row[14]) if row[14] is not None else None,
+        "width": float(row[15]) if row[15] is not None else None,
+        "depth": float(row[16]) if row[16] is not None else None,
+        "length": float(row[17]) if row[17] is not None else None,
+        "diameter": float(row[18]) if row[18] is not None else None,
+        "weight": float(row[19]) if row[19] is not None else None,
+        # Комплектація
+        "set_contents": row[20] or "",
+        "complectation": row[21] or "",
     }
 
 @router.get("/categories")
