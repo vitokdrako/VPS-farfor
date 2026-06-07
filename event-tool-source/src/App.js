@@ -611,11 +611,14 @@ const EventPlannerPage = () => {
               />
             </div>
 
-            {/* Категорії як chips — тільки на мобільному (через CSS) */}
+            {/* Категорії + підкатегорії як chips — тільки на мобільному (через CSS) */}
             <CategoryChips
               categories={categories}
+              subcategories={availableSubcategories}
               selectedCategory={selectedCategory}
-              onSelect={setSelectedCategory}
+              selectedSubcategory={selectedSubcategory}
+              onSelectCategory={setSelectedCategory}
+              onSelectSubcategory={setSelectedSubcategory}
             />
 
             {/* Products Count */}
@@ -886,7 +889,7 @@ const EventPlannerPage = () => {
 
       {/* Нижня навігація — тільки на мобільному (CSS) */}
       <MobileBottomNav
-        onOpenCart={() => setIsSidePanelOpen(true)}
+        onOpenCart={() => { if (!isSidePanelOpen) toggleSidePanel(); }}
         cartCount={activeBoard?.items?.length || 0}
       />
     </div>

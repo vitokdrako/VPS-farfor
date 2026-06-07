@@ -34,7 +34,7 @@ html, body {
 }
 
 /* ============================================================
-   КАТЕГОРІЇ — горизонтальні chips
+   КАТЕГОРІЇ — горизонтальні chips у шапці
    ============================================================ */
 @media (max-width: 768px) {
     /* Селекти категорій ховаємо — замінюємо chips-ами */
@@ -44,10 +44,23 @@ html, body {
     }
 }
 
-.category-chips {
+/* Обгортка chips категорій + підкатегорій — sticky під хедером */
+.category-chips-wrapper {
     display: none;
 }
 @media (max-width: 768px) {
+    .category-chips-wrapper {
+        display: block;
+        position: sticky;
+        top: 58px;            /* висота нашого мобільного хедера */
+        z-index: 40;
+        background: #fff;
+        margin: 0 -10px 8px;
+        border-bottom: 1px solid #f0f0f0;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
+    }
+
+    /* Ряд 1 — категорії */
     .category-chips {
         display: flex;
         gap: 8px;
@@ -55,18 +68,34 @@ html, body {
         overflow-x: auto;
         scroll-behavior: smooth;
         -webkit-overflow-scrolling: touch;
-        position: sticky;
-        top: 58px;
-        background: #fff;
-        z-index: 40;
-        margin: 0 -10px;
     }
-    .category-chips::-webkit-scrollbar { display: none; }
-    .category-chips { scrollbar-width: none; }
+
+    /* Ряд 2 — підкатегорії (з'являється тільки коли активна категорія) */
+    .subcategory-chips {
+        display: flex;
+        gap: 6px;
+        padding: 0 12px 10px;
+        overflow-x: auto;
+        scroll-behavior: smooth;
+        -webkit-overflow-scrolling: touch;
+        border-top: 1px solid #f8fafc;
+        padding-top: 8px;
+        animation: chip-row-enter 0.2s ease-out;
+    }
+
+    @keyframes chip-row-enter {
+        from { opacity: 0; transform: translateY(-4px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .category-chips::-webkit-scrollbar,
+    .subcategory-chips::-webkit-scrollbar { display: none; }
+    .category-chips,
+    .subcategory-chips { scrollbar-width: none; }
 
     .category-chip {
         flex-shrink: 0;
-        padding: 8px 18px;
+        padding: 7px 16px;
         border-radius: 999px;
         border: none;
         background: #ededed;
@@ -76,11 +105,24 @@ html, body {
         cursor: pointer;
         white-space: nowrap;
         transition: all 0.2s;
+        font-family: inherit;
     }
     .category-chip.active {
-        background: #2a2a2a;
+        background: #0a3d2e;
         color: #fff;
         font-weight: 600;
+    }
+
+    /* Підкатегорійні chips — трохи менші і світліші */
+    .subcategory-chips .category-chip {
+        padding: 5px 12px;
+        font-size: 12px;
+        background: #f5f5f7;
+        color: #777;
+    }
+    .subcategory-chips .category-chip.active {
+        background: #1a1a1a;
+        color: #fff;
     }
 }
 

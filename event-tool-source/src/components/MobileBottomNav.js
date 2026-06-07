@@ -26,11 +26,11 @@ const MobileBottomNav = ({ onOpenCart, cartCount = 0 }) => {
   return (
     <nav className="mobile-bottom-nav" data-testid="mobile-bottom-nav">
       <Item
-        icon="◯"
-        label="Кабінет"
-        active={pathname === '/profile'}
-        onClick={() => navigate('/profile')}
-        testid="bnav-profile"
+        icon="📖"
+        label="Правила"
+        active={pathname === '/rules'}
+        onClick={() => navigate('/rules')}
+        testid="bnav-rules"
       />
       <Item
         icon="🛍"
@@ -42,11 +42,11 @@ const MobileBottomNav = ({ onOpenCart, cartCount = 0 }) => {
         testid="bnav-cart"
       />
       <Item
-        icon="📄"
-        label="Правила"
-        active={pathname === '/rules'}
-        onClick={() => navigate('/rules')}
-        testid="bnav-rules"
+        icon="👤"
+        label="Кабінет"
+        active={pathname === '/profile'}
+        onClick={() => navigate('/profile')}
+        testid="bnav-profile"
       />
     </nav>
   );
