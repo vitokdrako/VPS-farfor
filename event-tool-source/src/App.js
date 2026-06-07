@@ -14,6 +14,7 @@ import MoodboardCanvas from './components/MoodboardCanvas';
 import ProductFilters from './components/ProductFilters';
 import CreateBoardModal from './components/CreateBoardModal';
 import UserProfile from './components/UserProfile';
+import RentalRules from './pages/RentalRules';
 import './App.css';
 import api from './api/axios';
 
@@ -530,11 +531,16 @@ const EventPlannerPage = () => {
       {/* Header */}
       <header className="fd-header sticky top-0 z-10">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            {/* Logo */}
-            <img 
-              src="/logo.svg" 
-              alt="FarforDecor Logo" 
+          <div
+            className="flex items-center gap-4 cursor-pointer"
+            onClick={() => navigate('/')}
+            role="button"
+            data-testid="header-home-link"
+          >
+            {/* Logo — клік повертає на головну */}
+            <img
+              src="/logo.svg"
+              alt="FarforDecor Logo"
               style={{
                 height: '40px',
                 width: 'auto'
@@ -544,10 +550,10 @@ const EventPlannerPage = () => {
             <h1 className="text-xl font-bold" style={{color: '#333', letterSpacing: '0.03em'}}>
               FarforDecorOrenda
             </h1>
-            <div className="w-px h-5" style={{background: '#e6e6e6'}}></div>
-            <span className="text-xs" style={{color: '#999', textTransform: 'uppercase'}}>Event Planning Platform</span>
+            <div className="w-px h-5 hide-on-mobile" style={{background: '#e6e6e6'}}></div>
+            <span className="text-xs hide-on-mobile" style={{color: '#999', textTransform: 'uppercase'}}>Event Planning Platform</span>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 header-actions-desktop">
             <button
               onClick={() => navigate('/profile')}
               className="fd-btn fd-btn-secondary"
@@ -927,6 +933,7 @@ function App() {
                   </ProtectedRoute>
                 }
               />
+              <Route path="/rules" element={<RentalRules />} />
             </Routes>
           </BrowserRouter>
         </BoardProvider>

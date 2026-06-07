@@ -1,19 +1,20 @@
 /**
- * Нижня навігація (4 пункти) — як на референсі.
- * Показується тільки на mobile (<768px) через CSS.
+ * Нижня навігація — 3 пункти (Профіль / Мудборд / Правила оренди).
+ * Показується тільки на мобільному (<768px) через CSS.
  */
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
-const Item = ({ icon, label, active, onClick, badge, testid }) => (
+const Item = ({ icon, label, active, onClick, badge, testid, large }) => (
   <button
     type="button"
     onClick={onClick}
-    className={`mobile-bottom-nav-item ${active ? 'active' : ''}`}
+    className={`mobile-bottom-nav-item ${active ? 'active' : ''} ${large ? 'is-large' : ''}`}
     data-testid={testid}
     aria-label={label}
   >
     <span className="mobile-bottom-nav-icon">{icon}</span>
+    <span className="mobile-bottom-nav-label">{label}</span>
     {badge ? <span className="mobile-bottom-nav-badge">{badge}</span> : null}
   </button>
 );
@@ -25,11 +26,11 @@ const MobileBottomNav = ({ onOpenCart, cartCount = 0 }) => {
   return (
     <nav className="mobile-bottom-nav" data-testid="mobile-bottom-nav">
       <Item
-        icon="⌂"
-        label="Каталог"
-        active={pathname === '/'}
-        onClick={() => navigate('/')}
-        testid="bnav-home"
+        icon="◯"
+        label="Кабінет"
+        active={pathname === '/profile'}
+        onClick={() => navigate('/profile')}
+        testid="bnav-profile"
       />
       <Item
         icon="🛍"
@@ -37,21 +38,15 @@ const MobileBottomNav = ({ onOpenCart, cartCount = 0 }) => {
         active={false}
         onClick={onOpenCart}
         badge={cartCount > 0 ? cartCount : null}
+        large
         testid="bnav-cart"
       />
       <Item
-        icon="♡"
-        label="Обране"
-        active={false}
-        onClick={() => navigate('/profile')}
-        testid="bnav-fav"
-      />
-      <Item
-        icon="◯"
-        label="Профіль"
-        active={pathname === '/profile'}
-        onClick={() => navigate('/profile')}
-        testid="bnav-profile"
+        icon="📄"
+        label="Правила"
+        active={pathname === '/rules'}
+        onClick={() => navigate('/rules')}
+        testid="bnav-rules"
       />
     </nav>
   );

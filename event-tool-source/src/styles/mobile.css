@@ -14,23 +14,22 @@ html, body {
         background: #fff !important;
         border-bottom: none !important;
     }
+    /* Приховуємо desktop-actions: "Мої мудборди" + ім'я + "Вийти" */
+    .header-actions-desktop {
+        display: none !important;
+    }
+    /* Приховуємо subtitle + роздільник */
+    .hide-on-mobile {
+        display: none !important;
+    }
     header h1, header .text-2xl {
         font-size: 17px !important;
         font-weight: 700 !important;
         color: #1a1a1a !important;
-        max-width: 180px;
-        text-align: center;
     }
     header img {
         height: 32px !important;
         width: 32px !important;
-    }
-    header .text-xs, header .subtitle, header .user-name {
-        display: none !important;
-    }
-    header button, header a {
-        font-size: 11px !important;
-        padding: 6px 10px !important;
     }
 }
 
@@ -157,7 +156,7 @@ html, body {
 }
 
 /* ============================================================
-   НИЖНЯ НАВІГАЦІЯ (4 пункти)
+   НИЖНЯ НАВІГАЦІЯ — 3 пункти з підписами
    ============================================================ */
 .mobile-bottom-nav {
     display: none;
@@ -171,8 +170,9 @@ html, body {
         right: 0;
         background: #fff;
         border-top: 1px solid #f0f0f0;
-        padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+        padding: 8px 12px max(8px, env(safe-area-inset-bottom));
         justify-content: space-around;
+        align-items: center;
         z-index: 90;
         box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.05);
     }
@@ -181,8 +181,8 @@ html, body {
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 2px;
-        padding: 6px 0;
+        gap: 3px;
+        padding: 6px 4px;
         background: transparent;
         border: none;
         cursor: pointer;
@@ -190,43 +190,60 @@ html, body {
         text-decoration: none;
         position: relative;
         transition: color 0.2s;
+        font-family: inherit;
     }
     .mobile-bottom-nav-item.active {
-        color: #1a1a1a;
-    }
-    .mobile-bottom-nav-item.active::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        background: #f0f0f0;
-        z-index: -1;
+        color: #0a3d2e;
     }
     .mobile-bottom-nav-icon {
-        font-size: 20px;
+        font-size: 22px;
         line-height: 1;
+    }
+    .mobile-bottom-nav-label {
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+    }
+    /* Центральна "Мудборд" — кругла велика акцентна */
+    .mobile-bottom-nav-item.is-large {
+        background: #0a3d2e;
+        color: #fff;
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        margin-top: -20px;
+        padding: 0;
+        box-shadow: 0 6px 18px rgba(10, 61, 46, 0.35);
+        flex: 0 0 auto;
+        gap: 0;
+        justify-content: center;
+    }
+    .mobile-bottom-nav-item.is-large .mobile-bottom-nav-icon {
+        font-size: 24px;
+        color: #fff;
+    }
+    .mobile-bottom-nav-item.is-large .mobile-bottom-nav-label {
+        display: none;
     }
     .mobile-bottom-nav-badge {
         position: absolute;
-        top: 0;
-        right: 22%;
+        top: -2px;
+        right: -2px;
         background: #c62828;
         color: #fff;
-        font-size: 9px;
+        font-size: 10px;
         font-weight: 700;
-        padding: 1px 5px;
+        padding: 2px 6px;
         border-radius: 999px;
-        min-width: 16px;
+        min-width: 18px;
         text-align: center;
+        line-height: 1;
+        border: 2px solid #fff;
     }
-
     /* Контент потребує padding-bottom щоб не ховатися за nav */
     body {
-        padding-bottom: 64px !important;
+        padding-bottom: 72px !important;
     }
 }
 
@@ -238,31 +255,10 @@ html, body {
         margin-right: 0 !important;
     }
 
-    /* Кнопка-вкладка "МУДБОРД" → переоформлена як FAB */
+    /* ПОВНІСТЮ ПРИБИРАЄМО вертикальну плаваючу кнопку "МУДБОРД" — використовуємо bottom nav */
     button.fixed.right-0.top-1\/2,
     button[class*="rotate"][class*="fixed"] {
-        position: fixed !important;
-        top: auto !important;
-        bottom: 88px !important;       /* над bottom nav */
-        right: 16px !important;
-        left: auto !important;
-        transform: none !important;
-        padding: 14px 22px !important;
-        border-radius: 999px !important;
-        height: auto !important;
-        width: auto !important;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25) !important;
-        z-index: 80 !important;
-        background: #1a1a1a !important;
-        color: #fff !important;
-    }
-    button.fixed.right-0.top-1\/2 span,
-    button[class*="rotate"][class*="fixed"] span {
-        transform: none !important;
-        font-size: 12px !important;
-        font-weight: 700 !important;
-        letter-spacing: 1px !important;
-        color: #fff !important;
+        display: none !important;
     }
 
     /* Sidebar fullscreen */
