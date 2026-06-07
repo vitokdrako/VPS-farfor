@@ -7,6 +7,8 @@ import DateRangePicker from './components/DateRangePicker';
 import ProductCard from './components/ProductCard';
 import ProductDetailsModal from './components/ProductDetailsModal';
 import CheckoutModal from './components/CheckoutModal';
+import CategoryChips from './components/CategoryChips';
+import MobileBottomNav from './components/MobileBottomNav';
 import BoardItemCard from './components/BoardItemCard';
 import MoodboardCanvas from './components/MoodboardCanvas';
 import ProductFilters from './components/ProductFilters';
@@ -603,6 +605,13 @@ const EventPlannerPage = () => {
               />
             </div>
 
+            {/* Категорії як chips — тільки на мобільному (через CSS) */}
+            <CategoryChips
+              categories={categories}
+              selectedCategory={selectedCategory}
+              onSelect={setSelectedCategory}
+            />
+
             {/* Products Count */}
             <div className="mb-4 flex items-center justify-between">
               <div className="text-sm" style={{color: '#666'}}>
@@ -868,6 +877,12 @@ const EventPlannerPage = () => {
           }}
         />
       )}
+
+      {/* Нижня навігація — тільки на мобільному (CSS) */}
+      <MobileBottomNav
+        onOpenCart={() => setIsSidePanelOpen(true)}
+        cartCount={activeBoard?.items?.length || 0}
+      />
     </div>
   );
 };
