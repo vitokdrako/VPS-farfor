@@ -230,8 +230,8 @@ const EventPlannerPage = () => {
   };
 
   const loadInitialData = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
       // Завантажити перші 100 товарів для швидкого старту
       const [productsData, categoriesData, subcategoriesData, boardsData] = await Promise.all([
         api.get('/event/products?limit=100').then(r => r.data),
@@ -255,14 +255,13 @@ const EventPlannerPage = () => {
       }
     } catch (error) {
       console.error('Failed to load data:', error);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   };
 
   const loadMoreProducts = async () => {
+    setLoadingMore(true);
     try {
-      setLoadingMore(true);
       const currentCount = products.length;
       const moreProducts = await api.get(
         buildProductsUrl(currentCount, 100, activeBoard?.rental_start_date, activeBoard?.rental_end_date)
@@ -271,13 +270,12 @@ const EventPlannerPage = () => {
       if (!Array.isArray(moreProducts) || moreProducts.length === 0) {
         setHasMore(false);
       } else {
-        setProducts([...products, ...moreProducts]);
+        setProducts(prev => [...prev, ...moreProducts]);
       }
     } catch (error) {
       console.error('Failed to load more products:', error);
-    } finally {
-      setLoadingMore(false);
     }
+    setLoadingMore(false);
   };
 
   const handleCreateBoard = async (boardData) => {
@@ -470,15 +468,18 @@ const EventPlannerPage = () => {
       const hasFilters = searchTerm || selectedCategory || selectedSubcategory || selectedColor;
       if (!hasFilters && !activeBoard?.rental_start_date) return;
 
-      setLoading(true);
-      api.get(`/event/products?${params.toString()}`)
-        .then(r => {
+      (async () => {
+        setLoading(true);
+        try {
+          const r = await api.get(`/event/products?${params.toString()}`);
           const data = Array.isArray(r.data) ? r.data : [];
           setProducts(data);
           setHasMore(data.length === 500);
-        })
-        .catch(e => console.error('Filter fetch failed:', e))
-        .finally(() => setLoading(false));
+        } catch (e) {
+          console.error('Filter fetch failed:', e);
+        }
+        setLoading(false);
+      })();
     }, 350); // debounce 350ms
 
     return () => clearTimeout(handle);
@@ -768,8 +769,8 @@ const EventPlannerPage = () => {
                   )}
                 </div>
 
-                {/* Compact Summary - Оптимізовано */}
-                <div style={{padding: '14px 18px', borderTop: '1px solid #f0f0f0', background: '#fafafa'}}>
+                {/* Compact Summary — sticky bottom на мобільному */}
+                <div className="sticky-checkout" style={{padding: '14px 18px', borderTop: '1px solid #f0f0f0', background: '#fafafa'}}>
                   {/* Інфо в один рядок */}
                   <div className="flex justify-between items-center mb-3" style={{fontSize: '11px'}}>
                     <span style={{color: '#666'}}>
@@ -779,9 +780,9 @@ const EventPlannerPage = () => {
                       Разом: <strong style={{color: '#333', fontSize: '13px'}}>₴{calculateBoardTotal().toFixed(2)}</strong>
                     </span>
                   </div>
-                  
+
                   {/* Кнопки */}
-                  <button 
+                  <button
                     onClick={() => setShowCanvas(true)}
                     className="w-full fd-btn fd-btn-primary mb-2"
                     disabled={!activeBoard.items || activeBoard.items.length === 0}
@@ -789,7 +790,7 @@ const EventPlannerPage = () => {
                   >
                     Візуальний мудборд
                   </button>
-                  <button 
+                  <button
                     className="w-full fd-btn fd-btn-black"
                     onClick={() => setShowCheckout(true)}
                     disabled={!activeBoard.items || activeBoard.items.length === 0}

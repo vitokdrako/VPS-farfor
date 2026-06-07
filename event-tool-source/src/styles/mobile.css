@@ -1,12 +1,14 @@
-/* === Mobile adaptation для Event Tool — полірована версія === */
+/* === Mobile adaptation для Event Tool — UX-orientована версія === */
 
-/* Глобально вимикаємо горизонтальний скрол */
+/* Глобально без горизонтального скролу */
 html, body {
     overflow-x: hidden !important;
     max-width: 100vw;
 }
 
-/* ---------- ХЕДЕР ---------- */
+/* ============================================================
+   ХЕДЕР — компактний
+   ============================================================ */
 @media (max-width: 768px) {
     header {
         padding: 8px 12px !important;
@@ -16,73 +18,80 @@ html, body {
         padding-left: 0 !important;
         padding-right: 0 !important;
     }
-    /* Логотип компактний */
-    header .text-2xl,
-    header h1 {
-        font-size: 15px !important;
+    header .text-2xl, header h1 {
+        font-size: 14px !important;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 160px;
+        max-width: 140px;
     }
-    /* Лого-картинка трохи менша */
     header img {
-        height: 28px !important;
-        width: 28px !important;
+        height: 26px !important;
+        width: 26px !important;
     }
-    /* "EVENT PLANNING PLATFORM" — забираємо */
-    header .text-xs,
-    header .subtitle {
+    header .text-xs, header .subtitle {
         display: none !important;
     }
-    /* Ім'я користувача — приховуємо повністю на телефоні */
-    header .user-name,
-    header span:has(> .user-greeting) {
+    header .user-name {
         display: none !important;
     }
-    /* Кнопки в хедері — компактні */
-    header button,
-    header a {
-        font-size: 11px !important;
-        padding: 6px 10px !important;
-        white-space: nowrap;
-    }
-    /* "МОЇ МУДБОРДИ" може бути в один рядок */
-    header button[aria-label*="мудборд" i],
-    header a[href*="profile"] {
+    header button, header a {
         font-size: 10px !important;
-        line-height: 1.1 !important;
+        padding: 5px 8px !important;
+        white-space: nowrap;
     }
 }
 
-/* ---------- КАТАЛОГ СІТКА ---------- */
+/* ============================================================
+   КАТАЛОГ — фокус на товари
+   ============================================================ */
+@media (max-width: 768px) {
+    /* Загальний падінг контенту менший */
+    .p-8 { padding: 10px !important; }
+
+    /* Дрібніший заголовок секції */
+    .text-2xl.font-bold { font-size: 16px !important; margin-bottom: 8px !important; }
+
+    /* Текст "Знайдено N товарів" приховуємо */
+    .mb-4.text-sm.text-gray-600,
+    div[class*="text-gray-500"][class*="text-sm"]:not(.bi-meta *) {
+        font-size: 11px !important;
+        margin-bottom: 6px !important;
+        color: #94a3b8 !important;
+    }
+}
+
+/* Пошук — sticky зверху */
+@media (max-width: 768px) {
+    .filters-container,
+    [data-testid="catalog-search"],
+    .corp-search {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: #fff;
+        padding: 8px 10px !important;
+        border-bottom: 1px solid #e5e7eb;
+        margin: 0 -10px 8px !important;
+    }
+}
+
+/* Сітка каталогу — 2 колонки */
 @media (max-width: 768px) {
     .grid.grid-cols-1.md\:grid-cols-2,
     .grid.grid-cols-1.sm\:grid-cols-2 {
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
         gap: 10px !important;
     }
-    .grid.grid-cols-2.md\:grid-cols-3,
-    .grid.grid-cols-2.md\:grid-cols-4 {
-        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-        gap: 10px !important;
-    }
 }
 
-@media (max-width: 380px) {
-    /* На дуже маленьких — теж 2 колонки, але ще щільніше */
-    .grid {
-        gap: 8px !important;
-    }
-}
-
-/* ---------- КАРТКА ТОВАРУ ---------- */
+/* Картка товару — компактна */
 @media (max-width: 768px) {
     .product-card-body {
-        padding: 10px 12px !important;
+        padding: 8px 10px !important;
     }
     .product-card-title {
-        font-size: 13px !important;
+        font-size: 12px !important;
         line-height: 1.3 !important;
         -webkit-line-clamp: 2;
         display: -webkit-box;
@@ -90,93 +99,115 @@ html, body {
         overflow: hidden;
     }
     .product-card-sku {
-        font-size: 10px !important;
-        margin-top: 2px !important;
+        font-size: 9px !important;
+        margin-top: 1px !important;
+    }
+    .product-card-info {
+        margin-top: 6px !important;
     }
     .product-card-price {
-        font-size: 15px !important;
+        font-size: 14px !important;
+    }
+    .product-card-quantity {
+        font-size: 10px !important;
     }
     .product-card-button {
-        font-size: 11px !important;
-        padding: 9px !important;
+        font-size: 10px !important;
+        padding: 8px !important;
+        margin-top: 6px !important;
         letter-spacing: 0.3px !important;
     }
     .product-availability-badge {
-        top: 6px !important;
-        right: 6px !important;
-        padding: 3px 7px !important;
-        font-size: 10px !important;
+        top: 4px !important;
+        right: 4px !important;
+        padding: 2px 6px !important;
+        font-size: 9px !important;
     }
 }
 
-/* ---------- ФІЛЬТРИ ---------- */
-@media (max-width: 768px) {
-    .p-8 {
-        padding: 12px !important;
-    }
-    /* Робимо фільтри більш компактними */
-    select, input[type="text"] {
-        font-size: 14px !important;
-        padding: 10px !important;
-    }
-}
-
-/* ---------- SIDEBAR "МІЙ ІВЕНТ" — BOTTOM SHEET ---------- */
+/* ============================================================
+   SIDEBAR "МІЙ ІВЕНТ" — bottom sheet
+   ============================================================ */
 @media (max-width: 1024px) {
-    /* Контейнер не залишає простір під sidebar */
     .flex.h-\[calc\(100vh-73px\)\] > div.mr-96 {
         margin-right: 0 !important;
     }
-    /* Сайдбар стає фіксованим bottom-sheet'ом */
-    .event-sidebar,
-    aside[class*="sidebar"],
-    .fd-side-panel {
-        position: fixed !important;
-        bottom: 0 !important;
-        right: 0 !important;
-        left: 0 !important;
-        top: auto !important;
-        height: 80vh !important;
-        max-height: 80vh !important;
-        width: 100% !important;
-        max-width: 100% !important;
-        z-index: 100 !important;
-        border-top-left-radius: 16px !important;
-        border-top-right-radius: 16px !important;
-        box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18) !important;
-        overflow-y: auto !important;
-        transform: none !important;
-    }
 
-    /* Бокова "Мудборд" кнопка — переоформляємо у нормальну floating button знизу */
-    button.fixed.right-0.top-1\/2 {
+    /* Бокова вертикальна кнопка "МУДБОРД" → FAB знизу-справа */
+    button.fixed.right-0.top-1\/2,
+    button[class*="rotate"][class*="fixed"] {
         position: fixed !important;
         top: auto !important;
         bottom: 16px !important;
         right: 16px !important;
         left: auto !important;
         transform: none !important;
-        padding: 12px 20px !important;
+        padding: 12px 18px !important;
         border-radius: 999px !important;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25) !important;
+        height: auto !important;
+        width: auto !important;
+        box-shadow: 0 8px 24px rgba(10, 61, 46, 0.35) !important;
+        z-index: 80 !important;
+        background: #0a3d2e !important;
+        color: #fff !important;
     }
-    button.fixed.right-0.top-1\/2 span {
+    button.fixed.right-0.top-1\/2 span,
+    button[class*="rotate"][class*="fixed"] span {
         transform: none !important;
         font-size: 12px !important;
         letter-spacing: 0.5px !important;
         font-weight: 700 !important;
+        color: #fff !important;
+    }
+
+    /* Sidebar як bottom-sheet з місцем для sticky-footer */
+    .event-sidebar,
+    aside[class*="sidebar"],
+    .fd-side-panel,
+    div.fixed.right-0.top-\[73px\] {
+        position: fixed !important;
+        bottom: 0 !important;
+        right: 0 !important;
+        left: 0 !important;
+        top: auto !important;
+        height: 85vh !important;
+        max-height: 85vh !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        z-index: 100 !important;
+        border-top-left-radius: 18px !important;
+        border-top-right-radius: 18px !important;
+        box-shadow: 0 -10px 32px rgba(0, 0, 0, 0.2) !important;
+        overflow-y: auto !important;
+        transform: none !important;
+        padding-bottom: 90px !important; /* місце під sticky checkout */
     }
 }
 
-/* ---------- МОДАЛКИ (Checkout / Details) — FULLSCREEN на мобільному ---------- */
+/* Sticky footer з підсумком та кнопкою checkout у sidebar */
+@media (max-width: 1024px) {
+    .sticky-checkout {
+        position: sticky;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: #fff;
+        border-top: 1px solid #e5e7eb;
+        padding: 12px 16px;
+        z-index: 10;
+        box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.08);
+    }
+}
+
+/* ============================================================
+   МОДАЛКИ FULLSCREEN
+   ============================================================ */
 @media (max-width: 768px) {
-    /* Overlay без падінгу */
     [data-testid="product-details-overlay"],
     [data-testid="checkout-overlay"] {
         padding: 0 !important;
         align-items: stretch !important;
     }
-    /* Модалка займає весь екран */
     [data-testid="product-details-modal"],
     [data-testid="checkout-modal"] {
         border-radius: 0 !important;
@@ -186,7 +217,14 @@ html, body {
         height: 100vh !important;
         margin: 0 !important;
     }
-    /* Закриваюча кнопка у видимому місці */
+    [data-testid="checkout-overlay"] > div {
+        border-radius: 0 !important;
+        max-width: 100vw !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        max-height: 100vh !important;
+        overflow-y: auto !important;
+    }
     [data-testid="product-details-close"] {
         top: env(safe-area-inset-top, 12px) !important;
         right: 12px !important;
@@ -196,14 +234,29 @@ html, body {
     }
 }
 
-/* CheckoutModal внутрішня обгортка теж fullscreen */
+/* ============================================================
+   КНОПКА "ФІЛЬТРИ" та ховання фільтрів за замовч.
+   ============================================================ */
 @media (max-width: 768px) {
-    [data-testid="checkout-overlay"] > div {
-        border-radius: 0 !important;
-        max-width: 100vw !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        max-height: 100vh !important;
-        overflow-y: auto !important;
+    .mobile-filters-hidden {
+        display: none !important;
+    }
+    .mobile-filters-toggle {
+        display: inline-flex !important;
+    }
+}
+@media (min-width: 769px) {
+    .mobile-filters-toggle {
+        display: none !important;
+    }
+}
+
+/* ============================================================
+   ДРОБНІ КНОПКИ В ХЕДЕРІ (Мої мудборди / Вийти)
+   ============================================================ */
+@media (max-width: 480px) {
+    /* На дуже маленьких — ховаємо текст, лишаємо тільки іконки/перші букви */
+    header a[href*="profile"] span:not(.icon) {
+        display: none;
     }
 }
