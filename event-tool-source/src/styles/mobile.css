@@ -126,6 +126,135 @@ html, body {
     }
 }
 
+/* Десктопний фолбек — chips приховані на широких екранах */
+@media (min-width: 769px) {
+    .category-chips-wrapper {
+        display: none;
+    }
+}
+
+/* ============================================================
+   ПРИХОВУЄМО НА МОБІЛЬНОМУ десктопні фільтри і "Знайдено N товарів"
+   ============================================================ */
+@media (max-width: 768px) {
+    .filters-container,
+    .filters-bar,
+    .corp-search-bar,
+    div.mb-4:has(> input[placeholder*="ошук" i]),
+    div.mb-4:has(> select) {
+        display: none !important;
+    }
+    /* "Знайдено товарів: N" — приховуємо */
+    div.mb-4.flex.items-center.justify-between {
+        display: none !important;
+    }
+}
+
+/* ============================================================
+   COLOR CHIPS (3-й ряд)
+   ============================================================ */
+@media (max-width: 768px) {
+    .color-chips {
+        display: flex;
+        gap: 6px;
+        padding: 6px 12px 10px;
+        overflow-x: auto;
+        scroll-behavior: smooth;
+        -webkit-overflow-scrolling: touch;
+        border-top: 1px solid #f8fafc;
+        animation: chip-row-enter 0.2s ease-out;
+    }
+    .color-chips::-webkit-scrollbar { display: none; }
+    .color-chips { scrollbar-width: none; }
+    .color-chips .category-chip {
+        padding: 5px 12px;
+        font-size: 12px;
+        background: #f5f5f7;
+        color: #777;
+    }
+    .color-chips .category-chip.active {
+        background: #475569;
+        color: #fff;
+    }
+}
+
+/* ============================================================
+   ПЛАВАЮЧА КНОПКА-ЛУПА + МОДАЛКА ПОШУКУ
+   ============================================================ */
+.mobile-search-fab {
+    display: none;
+}
+@media (max-width: 768px) {
+    .mobile-search-fab {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: fixed;
+        bottom: 96px;
+        right: 16px;
+        width: 50px;
+        height: 50px;
+        border-radius: 50%;
+        background: #fff;
+        color: #0a3d2e;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+        cursor: pointer;
+        z-index: 85;
+    }
+    .mobile-search-fab:active { transform: scale(0.94); }
+    .mobile-search-fab-dot {
+        position: absolute;
+        top: 8px; right: 8px;
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        background: #c62828;
+    }
+}
+
+.mobile-search-modal { display: none; }
+@media (max-width: 768px) {
+    .mobile-search-modal {
+        display: block;
+        position: fixed; inset: 0;
+        background: rgba(15, 23, 42, 0.4);
+        z-index: 150;
+        animation: search-fade 0.15s ease-out;
+    }
+    @keyframes search-fade {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+    }
+    .mobile-search-modal-inner {
+        background: #fff;
+        padding: 14px 12px max(14px, env(safe-area-inset-bottom));
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    }
+    .mobile-search-input-row {
+        display: flex; align-items: center; gap: 10px;
+        background: #f5f5f7;
+        border-radius: 12px;
+        padding: 10px 14px;
+    }
+    .mobile-search-input {
+        flex: 1; border: none; outline: none;
+        background: transparent;
+        font-size: 15px; color: #0f172a;
+        font-family: inherit; min-width: 0;
+    }
+    .mobile-search-input::placeholder { color: #94a3b8; }
+    .mobile-search-clear {
+        background: transparent; border: none;
+        color: #94a3b8; cursor: pointer;
+        padding: 4px; display: flex;
+    }
+    .mobile-search-close {
+        background: transparent; border: none;
+        color: #0a3d2e; font-weight: 600; font-size: 13px;
+        cursor: pointer; padding: 0 4px; flex-shrink: 0;
+    }
+}
+
 /* ============================================================
    ЗАГОЛОВКИ СЕКЦІЙ (як "Нові надходження" з референсу)
    ============================================================ */

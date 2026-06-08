@@ -9,6 +9,7 @@ import ProductDetailsModal from './components/ProductDetailsModal';
 import CheckoutModal from './components/CheckoutModal';
 import CategoryChips from './components/CategoryChips';
 import MobileBottomNav from './components/MobileBottomNav';
+import MobileSearchFab from './components/MobileSearchFab';
 import BoardItemCard from './components/BoardItemCard';
 import MoodboardCanvas from './components/MoodboardCanvas';
 import ProductFilters from './components/ProductFilters';
@@ -189,6 +190,7 @@ const EventPlannerPage = () => {
   const [products, setProducts] = useState([]);
   const [categories, setCategories] = useState([]);
   const [allSubcategories, setAllSubcategories] = useState([]);
+  const [allColors, setAllColors] = useState([]);
   const [boards, setBoards] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(null);
@@ -251,6 +253,7 @@ const EventPlannerPage = () => {
       setProducts(Array.isArray(productsData) ? productsData : []);
       setCategories(categoriesList);
       setAllSubcategories(Array.isArray(subcategoriesData) ? subcategoriesData : []);
+      setAllColors(Array.isArray(categoriesData?.colors) ? categoriesData.colors : []);
       setBoards(Array.isArray(boardsData) ? boardsData : []);
 
       if (Array.isArray(boardsData) && boardsData.length > 0) {
@@ -472,7 +475,7 @@ const EventPlannerPage = () => {
       if (!hasFilters && !activeBoard?.rental_start_date) return;
 
       (async () => {
-        setLoading(true);
+        // НЕ ставимо setLoading(true) — щоб сітка не мерехтіла при кожній буквці
         try {
           const r = await api.get(`/event/products?${params.toString()}`);
           const data = Array.isArray(r.data) ? r.data : [];
@@ -481,7 +484,6 @@ const EventPlannerPage = () => {
         } catch (e) {
           console.error('Filter fetch failed:', e);
         }
-        setLoading(false);
       })();
     }, 350); // debounce 350ms
 
@@ -611,14 +613,17 @@ const EventPlannerPage = () => {
               />
             </div>
 
-            {/* Категорії + підкатегорії як chips — тільки на мобільному (через CSS) */}
+            {/* Категорії + підкатегорії + кольори як chips — тільки на мобільному (через CSS) */}
             <CategoryChips
               categories={categories}
               subcategories={availableSubcategories}
+              colors={allColors}
               selectedCategory={selectedCategory}
               selectedSubcategory={selectedSubcategory}
+              selectedColor={selectedColor}
               onSelectCategory={setSelectedCategory}
               onSelectSubcategory={setSelectedSubcategory}
+              onSelectColor={setSelectedColor}
             />
 
             {/* Products Count */}
@@ -891,6 +896,13 @@ const EventPlannerPage = () => {
       <MobileBottomNav
         onOpenCart={() => { if (!isSidePanelOpen) toggleSidePanel(); }}
         cartCount={activeBoard?.items?.length || 0}
+      />
+
+      {/* Плаваюча кнопка пошуку (лупа) — тільки на мобільному (CSS) */}
+      <MobileSearchFab
+        value={searchTerm}
+        onChange={setSearchTerm}
+        placeholder="Назва, артикул, категорія..."
       />
     </div>
   );
