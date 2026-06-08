@@ -1,11 +1,12 @@
 /**
- * Нижня навігація — 3 пункти (Профіль / Мудборд / Правила оренди).
- * Показується тільки на мобільному (<768px) через CSS.
+ * Нижня навігація — 3 пункти (Правила / Мудборд / Кабінет)
+ * Іконки з lucide-react.
  */
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { BookOpen, ShoppingBag, User } from 'lucide-react';
 
-const Item = ({ icon, label, active, onClick, badge, testid, large }) => (
+const Item = ({ Icon, label, active, onClick, badge, testid, large }) => (
   <button
     type="button"
     onClick={onClick}
@@ -13,7 +14,7 @@ const Item = ({ icon, label, active, onClick, badge, testid, large }) => (
     data-testid={testid}
     aria-label={label}
   >
-    <span className="mobile-bottom-nav-icon">{icon}</span>
+    <Icon size={large ? 24 : 22} strokeWidth={2} className="mobile-bottom-nav-icon" />
     <span className="mobile-bottom-nav-label">{label}</span>
     {badge ? <span className="mobile-bottom-nav-badge">{badge}</span> : null}
   </button>
@@ -26,14 +27,14 @@ const MobileBottomNav = ({ onOpenCart, cartCount = 0 }) => {
   return (
     <nav className="mobile-bottom-nav" data-testid="mobile-bottom-nav">
       <Item
-        icon="📖"
+        Icon={BookOpen}
         label="Правила"
         active={pathname === '/rules'}
         onClick={() => navigate('/rules')}
         testid="bnav-rules"
       />
       <Item
-        icon="🛍"
+        Icon={ShoppingBag}
         label="Мудборд"
         active={false}
         onClick={onOpenCart}
@@ -42,7 +43,7 @@ const MobileBottomNav = ({ onOpenCart, cartCount = 0 }) => {
         testid="bnav-cart"
       />
       <Item
-        icon="👤"
+        Icon={User}
         label="Кабінет"
         active={pathname === '/profile'}
         onClick={() => navigate('/profile')}

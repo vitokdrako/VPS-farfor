@@ -240,6 +240,12 @@ html, body {
     .mobile-bottom-nav-icon {
         font-size: 22px;
         line-height: 1;
+        display: block;
+        flex-shrink: 0;
+        stroke-width: 2;
+    }
+    .mobile-bottom-nav-item.active .mobile-bottom-nav-icon {
+        stroke-width: 2.4;
     }
     .mobile-bottom-nav-label {
         font-size: 10px;
@@ -262,8 +268,8 @@ html, body {
         justify-content: center;
     }
     .mobile-bottom-nav-item.is-large .mobile-bottom-nav-icon {
-        font-size: 24px;
         color: #fff;
+        stroke: #fff;
     }
     .mobile-bottom-nav-item.is-large .mobile-bottom-nav-label {
         display: none;
