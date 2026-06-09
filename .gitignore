@@ -1372,3 +1372,7 @@ frontend/node_modules/.cache/default-development/28.pack
 frontend/node_modules/.cache/default-development/32.pack
 frontend/node_modules/.cache/default-development/30.pack
 frontend/node_modules/.cache/default-development/36.pack
+
+# Encryption keys
+backend/.encryption_key
+.encryption_key
